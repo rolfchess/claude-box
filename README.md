@@ -64,8 +64,8 @@ Claude — it needs to *write* credentials, memory, and runtime state, and it
 would collapse the per-directory isolation). Instead, the static, shareable
 parts are overlaid **read-only** on top of the per-project home:
 
-| Shared by default (read-only) | Not shared by default |
-|-------------------------------|-----------------------|
+| Shared by default (read-only)                                             | Not shared by default                                 |
+| ------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `skills/`, `commands/`, `agents/`, `rules/`, `scripts/`, `output-styles/` | `settings.json`, `CLAUDE.md` (use `--share-settings`) |
 
 Credentials, memory, `projects/`, `todos/`, etc. stay **writable and
@@ -170,9 +170,9 @@ If you don't need it, remove the `/var/run/docker.sock` volume from
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `claude-box` | Start script (build + run + mount + memory routing) |
-| `docker-compose.yml` | Service, volumes, Testcontainers env |
-| `Dockerfile` | Image: git, glab, Maven/JDK 21, Node, Claude Code |
-| `entrypoint.sh` | Fixes socket perms, drops root → `claude` user |
+| File                 | Purpose                                             |
+| -------------------- | --------------------------------------------------- |
+| `claude-box`         | Start script (build + run + mount + memory routing) |
+| `docker-compose.yml` | Service, volumes, Testcontainers env                |
+| `Dockerfile`         | Image: git, glab, Maven/JDK 21, Node, Claude Code   |
+| `entrypoint.sh`      | Fixes socket perms, drops root → `claude` user      |
