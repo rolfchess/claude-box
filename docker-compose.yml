@@ -1,0 +1,35 @@
+name: claude-box
+
+services:
+  claude:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: claude-box:latest
+    init: true
+    stdin_open: true
+    tty: true
+    working_dir: ${CLAUDE_BOX_WORKDIR:-/workspace}
+    environment:
+      TZ: ${TZ:-UTC}
+      # --- Testcontainers: reach sibling containers via the Docker host ---
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+      TESTCONTAINERS_RYUK_DISABLED: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Project under review (set by the claude-box script)
+      - "${CLAUDE_BOX_PROJECT_DIR:?run via the claude-box script}:${CLAUDE_BOX_WORKDIR:-/workspace}"
+      # Per-project Claude home -> isolated memory/config/credentials
+      - "${CLAUDE_BOX_CONFIG_DIR:?run via the claude-box script}:/home/claude/.claude"
+      # Per-project glab config (GitLab auth lives here)
+      - "${CLAUDE_BOX_GLAB_DIR:?run via the claude-box script}:/home/claude/.config/glab"
+      # Host git identity (name/email), read-only
+      - "${CLAUDE_BOX_GITCONFIG:?run via the claude-box script}:/home/claude/.gitconfig:ro"
+      # Maven cache, shared across all projects to avoid re-downloading the world
+      - "claude-box-m2:/home/claude/.m2"
+      # Host Docker daemon -> enables Testcontainers
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+volumes:
+  claude-box-m2:

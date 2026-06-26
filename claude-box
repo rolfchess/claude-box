@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+#
+# claude-box — start an isolated Docker container with Claude Code running
+# inside it, with per-directory memory.
+#
+#   claude-box [options] [DIR]
+#
+#   DIR              Directory to mount and work in (default: current dir).
+#
+# By default the project is mounted at its real host path inside the container
+# (e.g. /Users/you/app -> /Users/you/app) so Testcontainers file/bind mounts
+# resolve identically on both sides. Use --workspace to mount at /workspace
+# instead.
+#
+# By default your host ~/.claude skills, commands, agents, rules and scripts
+# are overlaid read-only inside the box (your settings.json/CLAUDE.md are not,
+# unless you pass --share-settings). Credentials and memory stay writable and
+# per-project.
+#
+# Even though the box runs with --dangerously-skip-permissions, a deny rule +
+# PreToolUse hook (both enforced in bypass mode) block two things by default:
+#   - certain commands: "git commit", "git push"  (CLAUDE_BOX_BLOCK)
+#   - any command that mentions ".m2/repository", e.g. decompiling jars in the
+#     Maven repo  (CLAUDE_BOX_BLOCK_PATHS)
+# Set either env var to "" to turn that block off.
+#
+# Options:
+#   --shell           Open a bash shell instead of Claude.
+#   --workspace       Mount the project at /workspace instead of its host path.
+#   --no-share        Don't overlay any host ~/.claude config (clean slate).
+#   --share-settings  Merge host settings.json + overlay CLAUDE.md (read-only).
+#   --rebuild         Force a rebuild of the image before starting.
+#   -h, --help        Show this help.
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAUDE_BOX_HOME="${CLAUDE_BOX_HOME:-$HOME/.claude-box}"
+
+usage() { sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+CMD=(claude --dangerously-skip-permissions)
+MIRROR_PATH=1
+REBUILD=0
+SHARE_CONFIG=1
+SHARE_SETTINGS=0
+DIR=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --shell)          CMD=(bash) ;;
+        --workspace)      MIRROR_PATH=0 ;;
+        --no-share)       SHARE_CONFIG=0 ;;
+        --share-settings) SHARE_SETTINGS=1 ;;
+        --rebuild)        REBUILD=1 ;;
+        -h|--help)      usage; exit 0 ;;
+        --)             shift; break ;;
+        -*)             echo "Unknown option: $1" >&2; usage; exit 1 ;;
+        *)              DIR="$1" ;;
+    esac
+    shift
+done
+
+# Resolve the directory to mount.
+DIR="${DIR:-$PWD}"
+if [ ! -d "$DIR" ]; then
+    echo "Error: '$DIR' is not a directory." >&2
+    exit 1
+fi
+DIR="$(cd "$DIR" && pwd)"
+
+# Stable per-directory key: <basename>-<8 hex of full path>.
+SLUG="$(basename "$DIR" | tr -c 'A-Za-z0-9_.-' '-')"
+HASH="$(printf '%s' "$DIR" | shasum | cut -c1-8)"
+KEY="${SLUG}-${HASH}"
+
+PROJECT_STATE="$CLAUDE_BOX_HOME/projects/$KEY"
+mkdir -p "$PROJECT_STATE/claude" "$PROJECT_STATE/glab"
+
+# Git identity: reuse the host gitconfig if present, else an empty placeholder.
+if [ -f "$HOME/.gitconfig" ]; then
+    GITCONFIG="$HOME/.gitconfig"
+else
+    GITCONFIG="$PROJECT_STATE/gitconfig"
+    [ -f "$GITCONFIG" ] || : > "$GITCONFIG"
+fi
+
+# Where the project is mounted inside the container.
+if [ "$MIRROR_PATH" = "1" ]; then
+    WORKDIR="$DIR"
+else
+    WORKDIR="/workspace"
+fi
+
+export CLAUDE_BOX_PROJECT_DIR="$DIR"
+export CLAUDE_BOX_CONFIG_DIR="$PROJECT_STATE/claude"
+export CLAUDE_BOX_GLAB_DIR="$PROJECT_STATE/glab"
+export CLAUDE_BOX_GITCONFIG="$GITCONFIG"
+export CLAUDE_BOX_WORKDIR="$WORKDIR"
+export TZ="${TZ:-$(readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##')}"
+
+# Overlay selected host ~/.claude items read-only so skills/commands/rules/etc.
+# are available inside the box without exposing (or letting the box mutate) the
+# rest of your real config. Credentials + memory stay writable & per-project.
+SHARE_MOUNTS=()
+if [ "$SHARE_CONFIG" = "1" ]; then
+    for item in skills commands agents rules scripts output-styles; do
+        if [ -e "$HOME/.claude/$item" ]; then
+            SHARE_MOUNTS+=(-v "$HOME/.claude/$item:/home/claude/.claude/$item:ro")
+        fi
+    done
+fi
+if [ "$SHARE_SETTINGS" = "1" ]; then
+    # settings.json is merged into the generated box settings (see below), not
+    # bind-mounted, so the guardrail hook/deny rules survive.
+    [ -f "$HOME/.claude/CLAUDE.md" ] && \
+        SHARE_MOUNTS+=(-v "$HOME/.claude/CLAUDE.md:/home/claude/.claude/CLAUDE.md:ro")
+fi
+
+# App config dirs under ~/.config, mounted at the same path so tools find them
+# natively (e.g. dticket reads ~/.config/dticket). Mounted read-write so the
+# app behaves exactly as on the host; add :ro below if you prefer. Set
+# CLAUDE_BOX_CONFIG_DIRS="dticket foo" to mount more. Always on (not affected
+# by --no-share, which only governs ~/.claude config).
+for sub in ${CLAUDE_BOX_CONFIG_DIRS:-dticket}; do
+    if [ -d "$HOME/.config/$sub" ]; then
+        SHARE_MOUNTS+=(-v "$HOME/.config/$sub:/home/claude/.config/$sub")
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Guardrail: block selected commands / paths even though the box runs with
+# --dangerously-skip-permissions. A PreToolUse hook is the real enforcement
+# (it runs in bypass mode and exit-2 blocks the call); deny rules are a visible
+# second layer. Written into the per-project Claude home (mounted at ~/.claude),
+# so no extra mounts are needed. Two separate block lists:
+#
+#   CLAUDE_BOX_BLOCK="git commit,git push"     # block these commands
+#   CLAUDE_BOX_BLOCK_PATHS=".m2/repository"    # block any command that
+#                                              # mentions these paths (stops
+#                                              # decompiling/extracting jars
+#                                              # in the Maven repo)
+# Set either to "" to turn that block off.
+# ---------------------------------------------------------------------------
+BLOCK_CMDS="${CLAUDE_BOX_BLOCK-git commit,git push}"
+BLOCK_PATHS="${CLAUDE_BOX_BLOCK_PATHS-.m2/repository}"
+SETTINGS_FILE="$PROJECT_STATE/claude/settings.json"
+HOOK_FILE="$PROJECT_STATE/claude/hooks/block-cmds.sh"
+
+if [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
+    BASE_SETTINGS="$(cat "$HOME/.claude/settings.json")"
+else
+    BASE_SETTINGS='{}'
+fi
+
+if [ -n "$BLOCK_CMDS" ] || [ -n "$BLOCK_PATHS" ]; then
+    mkdir -p "$PROJECT_STATE/claude/hooks"
+    DENY_JSON='[]'
+    REGEX=''
+    CMD_CHECK=''
+    PATH_CHECKS=''
+    OLDIFS=$IFS
+    IFS=',
+'
+    # Command word-sequences -> deny rules + a single combined regex.
+    for entry in $BLOCK_CMDS; do
+        entry="$(printf '%s' "$entry" | xargs)"   # trim whitespace
+        [ -z "$entry" ] && continue
+        DENY_JSON="$(printf '%s' "$DENY_JSON" | jq --arg e "$entry" '. + ["Bash(\($e) *)", "Bash(\($e))"]')"
+        rx="\\b$(printf '%s' "$entry" | sed -E 's/[[:space:]]+/\\b.*\\b/g')\\b"
+        REGEX="${REGEX:+$REGEX|}$rx"
+    done
+    [ -n "$REGEX" ] && CMD_CHECK="if printf '%s' \"\$cmd\" | grep -Eq '($REGEX)'; then echo \"claude-box: blocked command (CLAUDE_BOX_BLOCK): \$cmd\" >&2; exit 2; fi"
+
+    # Path substrings -> a literal (grep -F) check per path.
+    for p in $BLOCK_PATHS; do
+        p="$(printf '%s' "$p" | xargs)"
+        [ -z "$p" ] && continue
+        PATH_CHECKS="${PATH_CHECKS}if printf '%s' \"\$cmd\" | grep -Fq -- '$p'; then echo \"claude-box: blocked path '$p' (CLAUDE_BOX_BLOCK_PATHS): \$cmd\" >&2; exit 2; fi
+"
+    done
+    IFS=$OLDIFS
+
+    cat > "$HOOK_FILE" <<EOF
+#!/usr/bin/env bash
+# Auto-generated by claude-box. Blocks commands/paths even under
+# --dangerously-skip-permissions. Edit CLAUDE_BOX_BLOCK / CLAUDE_BOX_BLOCK_PATHS,
+# not this file.
+cmd="\$(jq -r '.tool_input.command // empty' 2>/dev/null)"
+[ -z "\$cmd" ] && exit 0
+$CMD_CHECK
+$PATH_CHECKS
+exit 0
+EOF
+    chmod +x "$HOOK_FILE"
+
+    printf '%s' "$BASE_SETTINGS" | jq \
+        --argjson deny "$DENY_JSON" \
+        --arg hook "/home/claude/.claude/hooks/block-cmds.sh" '
+        .permissions = (.permissions // {})
+        | .permissions.deny = ((.permissions.deny // []) + $deny | unique)
+        | .hooks = (.hooks // {})
+        | .hooks.PreToolUse = ((.hooks.PreToolUse // [])
+            + [{matcher: "Bash", hooks: [{type: "command", command: $hook}]}])
+        ' > "$SETTINGS_FILE"
+elif [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
+    printf '%s' "$BASE_SETTINGS" > "$SETTINGS_FILE"
+fi
+
+compose() { docker compose -f "$SCRIPT_DIR/docker-compose.yml" "$@"; }
+
+# Build on first use or when asked.
+if [ "$REBUILD" = "1" ] || ! docker image inspect claude-box:latest >/dev/null 2>&1; then
+    echo ">> Building claude-box image..."
+    compose build
+fi
+
+echo ">> Project:  $DIR"
+echo ">> Mounted:  $WORKDIR"
+echo ">> Memory:   $PROJECT_STATE/claude"
+if [ "${#SHARE_MOUNTS[@]}" -gt 0 ]; then
+    echo ">> Shared:   $((${#SHARE_MOUNTS[@]} / 2)) host mount(s) (skills/commands/rules + app config)"
+fi
+if [ -n "$BLOCK_CMDS" ] || [ -n "$BLOCK_PATHS" ]; then
+    echo ">> Blocked:  cmds=[$BLOCK_CMDS] paths=[$BLOCK_PATHS]"
+fi
+echo ">> Starting container (Ctrl-D / 'exit' to leave)..."
+
+exec compose run --rm ${SHARE_MOUNTS[@]+"${SHARE_MOUNTS[@]}"} claude "${CMD[@]}"
