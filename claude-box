@@ -14,8 +14,10 @@
 #
 # By default your host ~/.claude skills, commands, agents, rules and scripts
 # are overlaid read-only inside the box (your settings.json/CLAUDE.md are not,
-# unless you pass --share-settings). Credentials and memory stay writable and
-# per-project.
+# unless you pass --share-settings). Memory stays writable and per-project, but
+# your Claude login is shared across all boxes via a single credentials file, so
+# you log in once for every worktree/project. Pass --no-shared-auth to keep
+# credentials per-directory instead.
 #
 # Even though the box runs with --dangerously-skip-permissions, a deny rule +
 # PreToolUse hook (both enforced in bypass mode) block two things by default:
@@ -32,6 +34,7 @@
 #   --shell           Open a bash shell instead of Claude.
 #   --workspace       Mount the project at /workspace instead of its host path.
 #   --no-share        Don't overlay any host ~/.claude config (clean slate).
+#   --no-shared-auth  Don't share the login; keep credentials per-directory.
 #   --share-settings  Merge host settings.json + overlay CLAUDE.md (read-only).
 #   --no-notify       Don't speak notifications (same as CLAUDE_BOX_NOTIFY="").
 #   --rebuild         Force a rebuild of the image before starting.
@@ -42,13 +45,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_BOX_HOME="${CLAUDE_BOX_HOME:-$HOME/.claude-box}"
 
-usage() { sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/-h, --help/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 CMD=(claude --dangerously-skip-permissions)
 MIRROR_PATH=1
 REBUILD=0
 SHARE_CONFIG=1
 SHARE_SETTINGS=0
+SHARED_AUTH="${CLAUDE_BOX_SHARED_AUTH-1}"   # share one login across all boxes
 NO_NOTIFY=0
 DIR=""
 
@@ -57,6 +61,7 @@ while [ $# -gt 0 ]; do
         --shell)          CMD=(bash) ;;
         --workspace)      MIRROR_PATH=0 ;;
         --no-share)       SHARE_CONFIG=0 ;;
+        --no-shared-auth) SHARED_AUTH=0 ;;
         --share-settings) SHARE_SETTINGS=1 ;;
         --no-notify)      NO_NOTIFY=1 ;;
         --rebuild)        REBUILD=1 ;;
@@ -134,6 +139,23 @@ for sub in ${CLAUDE_BOX_CONFIG_DIRS:-dticket}; do
         SHARE_MOUNTS+=(-v "$HOME/.config/$sub:/home/claude/.config/$sub")
     fi
 done
+
+# Shared Claude login: bind one credentials file into every box so you log in
+# once and all worktrees/projects reuse the session, instead of re-authenticating
+# per directory. It nests on top of the per-project ~/.claude mount, shadowing any
+# stale per-project credentials. Claude writes this file in place on login and, on
+# token refresh, falls back to an in-place copy when its atomic rename hits EBUSY
+# against the mount point -- so refresh works through the bind mount. Disable with
+# --no-shared-auth (or CLAUDE_BOX_SHARED_AUTH=0) to keep credentials per-directory.
+SHARED_CREDS="${CLAUDE_BOX_CREDENTIALS:-$CLAUDE_BOX_HOME/credentials.json}"
+if [ "$SHARED_AUTH" = "1" ]; then
+    if [ ! -f "$SHARED_CREDS" ]; then
+        mkdir -p "$(dirname "$SHARED_CREDS")"
+        : > "$SHARED_CREDS"          # must exist as a file, else Docker binds a dir
+    fi
+    chmod 600 "$SHARED_CREDS" 2>/dev/null || true
+    SHARE_MOUNTS+=(-v "$SHARED_CREDS:/home/claude/.claude/.credentials.json")
+fi
 
 # ---------------------------------------------------------------------------
 # Guardrail: block selected commands / paths even though the box runs with
@@ -270,6 +292,9 @@ echo ">> Mounted:  $WORKDIR"
 echo ">> Memory:   $PROJECT_STATE/claude"
 if [ "${#SHARE_MOUNTS[@]}" -gt 0 ]; then
     echo ">> Shared:   $((${#SHARE_MOUNTS[@]} / 2)) host mount(s) (skills/commands/rules + app config)"
+fi
+if [ "$SHARED_AUTH" = "1" ]; then
+    echo ">> Auth:     shared login -> $SHARED_CREDS"
 fi
 if [ -n "$BLOCK_CMDS" ] || [ -n "$BLOCK_PATHS" ]; then
     echo ">> Blocked:  cmds=[$BLOCK_CMDS] paths=[$BLOCK_PATHS]"

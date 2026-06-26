@@ -32,8 +32,9 @@ Claude starts in that directory.
 ### First-time setup inside the container
 
 - **Claude login:** Claude will print an OAuth URL. Open it in your Mac
-  browser, approve, paste the code back. Stored per-project, so you log in once
-  per directory.
+  browser, approve, paste the code back. The credentials are shared across all
+  boxes (see [Shared login](#shared-login)), so you log in once for every
+  worktree/project. Pass `--no-shared-auth` to keep the login per-directory.
 - **GitLab:** run `glab auth login`. Stored per-project under
   `~/.claude-box/projects/<key>/glab`.
 - Your host `~/.gitconfig` (name/email) is mounted read-only, so commits are
@@ -68,8 +69,26 @@ parts are overlaid **read-only** on top of the per-project home:
 | ------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `skills/`, `commands/`, `agents/`, `rules/`, `scripts/`, `output-styles/` | `settings.json`, `CLAUDE.md` (use `--share-settings`) |
 
-Credentials, memory, `projects/`, `todos/`, etc. stay **writable and
-per-project**. Use `--no-share` for a completely clean slate.
+Memory, `projects/`, `todos/`, etc. stay **writable and per-project**.
+Credentials are **writable and shared** (see [Shared login](#shared-login)).
+Use `--no-share` for a completely clean slate.
+
+### Shared login
+
+Because the state key is derived from the directory path, every worktree of a
+repo is a separate project — which would otherwise mean re-authenticating in
+each one. To avoid that, the Claude login is shared: a single credentials file
+at `~/.claude-box/credentials.json` is bind-mounted into every box at
+`~/.claude/.credentials.json`, on top of the per-project home. Log in once and
+all boxes — every worktree, every project — reuse the session.
+
+This is safe across token refresh: Claude writes the file in place on login,
+and on refresh its atomic rename fails with `EBUSY` against the bind-mount and
+falls back to an in-place copy, so the host file stays in sync.
+
+- Disable with `--no-shared-auth` (or `CLAUDE_BOX_SHARED_AUTH=0`) to keep
+  credentials per-directory, as before.
+- Override the file location with `CLAUDE_BOX_CREDENTIALS=/some/path`.
 
 ### App config (`~/.config/...`)
 
