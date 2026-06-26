@@ -115,6 +115,30 @@ export TZ="${TZ:-$(readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##')
 # are available inside the box without exposing (or letting the box mutate) the
 # rest of your real config. Credentials + memory stay writable & per-project.
 SHARE_MOUNTS=()
+
+# Git worktree support. In a worktree the project's `.git` is a *file* pointing
+# at <mainrepo>/.git/worktrees/<name>, whose commondir points back to
+# <mainrepo>/.git -- all outside the mounted worktree, so git can't find its
+# repo. Bind-mount only that common .git dir (at its real host path, so the
+# absolute pointers resolve), which already contains the worktrees/<name>
+# subdir. Nothing else from the parent repo is exposed; the .m2/commit
+# guardrails still apply. Set CLAUDE_BOX_NO_GIT_COMMONDIR=1 to skip this.
+if [ "${CLAUDE_BOX_NO_GIT_COMMONDIR:-0}" != "1" ] \
+   && command -v git >/dev/null 2>&1 \
+   && git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    COMMON_GIT_DIR="$(git -C "$DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -z "$COMMON_GIT_DIR" ]; then           # older git without --path-format
+        COMMON_GIT_DIR="$(git -C "$DIR" rev-parse --git-common-dir)"
+        case "$COMMON_GIT_DIR" in /*) ;; *) COMMON_GIT_DIR="$DIR/$COMMON_GIT_DIR" ;; esac
+    fi
+    COMMON_GIT_DIR="$(cd "$COMMON_GIT_DIR" && pwd)"
+    case "$COMMON_GIT_DIR" in
+        "$DIR"/*) ;;   # normal repo: .git is inside the mounted dir, nothing to do
+        *) SHARE_MOUNTS+=(-v "$COMMON_GIT_DIR:$COMMON_GIT_DIR")
+           echo ">> Worktree: parent git dir -> $COMMON_GIT_DIR" ;;
+    esac
+fi
+
 if [ "$SHARE_CONFIG" = "1" ]; then
     for item in skills commands agents rules scripts output-styles; do
         if [ -e "$HOME/.claude/$item" ]; then
@@ -140,6 +164,27 @@ for sub in ${CLAUDE_BOX_CONFIG_DIRS:-dticket}; do
     fi
 done
 
+# Claude keeps onboarding/theme/account state -- hasCompletedOnboarding, theme,
+# trust-dialog acceptance, oauthAccount, MCP list, per-project history -- in
+# ~/.claude.json, a file in $HOME and NOT inside the ~/.claude directory. The
+# per-project ~/.claude mount does not cover it, so under `docker compose run
+# --rm` it lives only in the throwaway container layer and is lost on every
+# exit -- which is why each run re-prompts for login + theme.
+#
+# Persist it (pre-created so Docker binds a file, not a directory). Scope it to
+# match auth: when the login is shared (default), share this too so you onboard
+# ONCE and every worktree/project reuses it -- the state key is per absolute
+# path, so a per-directory file would re-onboard in every new worktree, defeating
+# the shared login. With --no-shared-auth, keep it per-directory to match.
+# Override the path explicitly with CLAUDE_BOX_CLAUDE_JSON.
+if [ "$SHARED_AUTH" = "1" ]; then
+    CLAUDE_JSON="${CLAUDE_BOX_CLAUDE_JSON:-$CLAUDE_BOX_HOME/claude.json}"
+else
+    CLAUDE_JSON="${CLAUDE_BOX_CLAUDE_JSON:-$PROJECT_STATE/claude.json}"
+fi
+[ -e "$CLAUDE_JSON" ] || printf '{}' > "$CLAUDE_JSON"
+SHARE_MOUNTS+=(-v "$CLAUDE_JSON:/home/claude/.claude.json")
+
 # Shared Claude login: bind one credentials file into every box so you log in
 # once and all worktrees/projects reuse the session, instead of re-authenticating
 # per directory. It nests on top of the per-project ~/.claude mount, shadowing any
@@ -154,6 +199,12 @@ if [ "$SHARED_AUTH" = "1" ]; then
         : > "$SHARED_CREDS"          # must exist as a file, else Docker binds a dir
     fi
     chmod 600 "$SHARED_CREDS" 2>/dev/null || true
+    # The shared creds bind-mount nests inside the per-project ~/.claude mount.
+    # On Docker Desktop (virtiofs) runc refuses to *create* the nested mountpoint
+    # (its parent is a host bind mount, so the path resolves outside the rootfs:
+    # "mountpoint ... is outside of rootfs"). Pre-create the target file in the
+    # per-project claude dir so runc binds onto an existing file instead.
+    [ -e "$PROJECT_STATE/claude/.credentials.json" ] || : > "$PROJECT_STATE/claude/.credentials.json"
     SHARE_MOUNTS+=(-v "$SHARED_CREDS:/home/claude/.claude/.credentials.json")
 fi
 
