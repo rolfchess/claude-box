@@ -32,6 +32,8 @@
 #
 # Options:
 #   --shell           Open a bash shell instead of Claude.
+#   --name NAME       Speak NAME in notifications instead of the directory name
+#                     (handy when the dir is a long/ugly worktree branch name).
 #   --workspace       Mount the project at /workspace instead of its host path.
 #   --no-share        Don't overlay any host ~/.claude config (clean slate).
 #   --no-shared-auth  Don't share the login; keep credentials per-directory.
@@ -54,11 +56,14 @@ SHARE_CONFIG=1
 SHARE_SETTINGS=0
 SHARED_AUTH="${CLAUDE_BOX_SHARED_AUTH-1}"   # share one login across all boxes
 NO_NOTIFY=0
+NAME=""
 DIR=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --shell)          CMD=(bash) ;;
+        --name)           NAME="${2-}"; shift ;;
+        --name=*)         NAME="${1#*=}" ;;
         --workspace)      MIRROR_PATH=0 ;;
         --no-share)       SHARE_CONFIG=0 ;;
         --no-shared-auth) SHARED_AUTH=0 ;;
@@ -230,7 +235,11 @@ SETTINGS_FILE="$PROJECT_STATE/claude/settings.json"
 HOOK_FILE="$PROJECT_STATE/claude/hooks/block-cmds.sh"
 NOTIFY_HOOK="$PROJECT_STATE/claude/hooks/notify.sh"
 NOTIFY_LOG="$PROJECT_STATE/claude/notify.log"
-LABEL="$(basename "$DIR")"
+LABEL="${NAME:-$(basename "$DIR")}"
+# Spoken label baked into the notify hook below. Restrict to characters that are
+# safe inside the double-quoted string in the generated script (drop quotes,
+# backticks, $, backslash, etc.) so an odd name/branch can't break the hook.
+SAY_LABEL="$(printf '%s' "$LABEL" | tr -c 'A-Za-z0-9 _.-' ' ' | xargs)"
 
 if [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
     SETTINGS="$(cat "$HOME/.claude/settings.json")"
@@ -308,9 +317,9 @@ input="\$(cat)"
 event="\$(printf '%s' "\$input" | jq -r '.hook_event_name // empty' 2>/dev/null)"
 msg="\$(printf '%s' "\$input" | jq -r '.message // empty' 2>/dev/null)"
 case "\$event" in
-    Stop)         text="Claude finished in $LABEL" ;;
-    Notification) text="\${msg:-Claude needs your input}, in $LABEL" ;;
-    *)            text="\${msg:-Claude} in $LABEL" ;;
+    Stop)         text="Claude finished in $SAY_LABEL" ;;
+    Notification) text="\${msg:-Claude needs your input}" ;;
+    *)            text="\${msg:-Claude}" ;;
 esac
 printf '%s\n' "\$text" >> /home/claude/.claude/notify.log
 exit 0
@@ -366,7 +375,7 @@ if [ -n "$NOTIFY" ] && command -v say >/dev/null 2>&1; then
     NOTIFIER_PID=$!
     set +m
     trap '[ -n "$NOTIFIER_PID" ] && kill -- -"$NOTIFIER_PID" 2>/dev/null' EXIT INT TERM
-    echo ">> Notify:   spoken via \`say\` on finish + needs-input"
+    echo ">> Notify:   spoken via \`say\` on finish + needs-input (name: $SAY_LABEL)"
 fi
 
 echo ">> Starting container (Ctrl-D / 'exit' to leave)..."
