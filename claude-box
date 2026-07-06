@@ -318,7 +318,14 @@ event="\$(printf '%s' "\$input" | jq -r '.hook_event_name // empty' 2>/dev/null)
 msg="\$(printf '%s' "\$input" | jq -r '.message // empty' 2>/dev/null)"
 case "\$event" in
     Stop)         text="Claude finished in $SAY_LABEL" ;;
-    Notification) text="\${msg:-Claude needs your input}" ;;
+    Notification)
+        # Skip the ~60s idle-timer notification ("Claude is waiting for your
+        # input"): it is not actionable and misfires while background agents are
+        # still running. Permission prompts use a different message and are kept.
+        case "\$msg" in
+            *"waiting for your input"*) exit 0 ;;
+        esac
+        text="\${msg:-Claude needs your input}" ;;
     *)            text="\${msg:-Claude}" ;;
 esac
 printf '%s\n' "\$text" >> /home/claude/.claude/notify.log
