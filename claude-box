@@ -30,10 +30,16 @@
 # or needs your input, so you can run it unattended. Set CLAUDE_BOX_NOTIFY="" to
 # turn this off.
 #
+# The container is named claude-box-<name-or-directory> instead of the random
+# name compose would generate, so `docker ps` / `docker exec` are readable. A
+# numeric suffix is added if that name is already in use. Override the whole
+# name with CLAUDE_BOX_CONTAINER_NAME.
+#
 # Options:
 #   --shell           Open a bash shell instead of Claude.
-#   --name NAME       Speak NAME in notifications instead of the directory name
-#                     (handy when the dir is a long/ugly worktree branch name).
+#   --name NAME       Use NAME instead of the directory name for the container
+#                     name and in spoken notifications (handy when the dir is a
+#                     long/ugly worktree branch name).
 #   --workspace       Mount the project at /workspace instead of its host path.
 #   --no-share        Don't overlay any host ~/.claude config (clean slate).
 #   --no-shared-auth  Don't share the login; keep credentials per-directory.
@@ -241,6 +247,26 @@ LABEL="${NAME:-$(basename "$DIR")}"
 # backticks, $, backslash, etc.) so an odd name/branch can't break the hook.
 SAY_LABEL="$(printf '%s' "$LABEL" | tr -c 'A-Za-z0-9 _.-' ' ' | xargs)"
 
+# Container name. `docker compose run` otherwise invents claude-box-claude-run-
+# <random>, which is useless in `docker ps` when several boxes are up. Derive it
+# from --name (or the directory basename): claude-box-<label>, sanitised to what
+# Docker accepts ([a-zA-Z0-9][a-zA-Z0-9_.-]*) and lowercased. If that name is
+# already taken -- e.g. a second box on the same worktree -- append -2, -3, ...
+# and fall back to the path hash if even those are gone.
+NAME_SLUG="$(printf '%s' "$LABEL" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_.-' '-' \
+             | sed -E 's/-+/-/g; s/^[-_.]+//; s/[-_.]+$//' | cut -c1-40)"
+NAME_SLUG="$(printf '%s' "$NAME_SLUG" | sed -E 's/[-_.]+$//')"   # cut may leave a trailing -
+CONTAINER_BASE="claude-box${NAME_SLUG:+-$NAME_SLUG}"
+CONTAINER_NAME="${CLAUDE_BOX_CONTAINER_NAME:-$CONTAINER_BASE}"
+if [ -z "${CLAUDE_BOX_CONTAINER_NAME:-}" ]; then
+    n=2
+    while docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; do
+        if [ "$n" -gt 20 ]; then CONTAINER_NAME="$CONTAINER_BASE-$HASH"; break; fi
+        CONTAINER_NAME="$CONTAINER_BASE-$n"
+        n=$((n + 1))
+    done
+fi
+
 if [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
     SETTINGS="$(cat "$HOME/.claude/settings.json")"
 else
@@ -356,6 +382,7 @@ fi
 
 echo ">> Project:  $DIR"
 echo ">> Mounted:  $WORKDIR"
+echo ">> Container: $CONTAINER_NAME"
 echo ">> Memory:   $PROJECT_STATE/claude"
 if [ "${#SHARE_MOUNTS[@]}" -gt 0 ]; then
     echo ">> Shared:   $((${#SHARE_MOUNTS[@]} / 2)) host mount(s) (skills/commands/rules + app config)"
@@ -389,5 +416,6 @@ echo ">> Starting container (Ctrl-D / 'exit' to leave)..."
 
 # Not exec'd: we stay alive so the trap can stop the notifier afterwards.
 STATUS=0
-docker compose -f "$SCRIPT_DIR/docker-compose.yml" run --rm ${SHARE_MOUNTS[@]+"${SHARE_MOUNTS[@]}"} claude "${CMD[@]}" || STATUS=$?
+docker compose -f "$SCRIPT_DIR/docker-compose.yml" run --rm --name "$CONTAINER_NAME" \
+    ${SHARE_MOUNTS[@]+"${SHARE_MOUNTS[@]}"} claude "${CMD[@]}" || STATUS=$?
 exit $STATUS

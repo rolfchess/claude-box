@@ -18,6 +18,7 @@ single mounted directory. Each mounted directory gets its **own memory**.
 ./claude-box                      # mount the current directory
 ./claude-box ~/code/my-app        # mount a specific directory
 ./claude-box --shell ~/x          # drop into a bash shell instead of Claude
+./claude-box --name api ~/x       # name the box (container name + notifications)
 ./claude-box --workspace ~/x      # mount at /workspace instead of the host path
 ./claude-box --no-share ~/x       # clean slate, no host ~/.claude config
 ./claude-box --share-settings ~/x # also overlay host settings.json + CLAUDE.md
@@ -28,6 +29,11 @@ First run builds the image (a few minutes). By default the project is mounted
 at its **real host path** inside the container (e.g. `~/code/my-app` →
 `/Users/you/code/my-app`) so Testcontainers file mounts line up — see below.
 Claude starts in that directory.
+
+The container is named `claude-box-<name-or-directory>` (e.g. `claude-box-my-app`)
+rather than the random name compose would pick, so `docker ps` / `docker exec`
+stay readable with several boxes running. A `-2`, `-3`, … suffix is added if the
+name is taken; `CLAUDE_BOX_CONTAINER_NAME` overrides it entirely.
 
 ### First-time setup inside the container
 
