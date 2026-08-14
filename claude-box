@@ -35,6 +35,15 @@
 # numeric suffix is added if that name is already in use. Override the whole
 # name with CLAUDE_BOX_CONTAINER_NAME.
 #
+# The container is stopped and removed when the script exits, including when you
+# close the terminal window (SIGHUP) -- `docker compose run --rm` on its own
+# leaves the box running in that case. Set CLAUDE_BOX_KEEP=1 to leave it up.
+#
+# Every box also carries a `claude-box=1` label (plus claude-box.project/.dir/
+# .workdir metadata), so you can pick them out of a crowded daemon regardless of
+# how they are named:  docker ps --filter label=claude-box
+# `claude-box --list` prints exactly that, with the project directory.
+#
 # Options:
 #   --shell           Open a bash shell instead of Claude.
 #   --name NAME       Use NAME instead of the directory name for the container
@@ -46,6 +55,7 @@
 #   --share-settings  Merge host settings.json + overlay CLAUDE.md (read-only).
 #   --no-notify       Don't speak notifications (same as CLAUDE_BOX_NOTIFY="").
 #   --rebuild         Force a rebuild of the image before starting.
+#   --list            List running claude-box containers and exit.
 #   -h, --help        Show this help.
 #
 set -euo pipefail
@@ -62,6 +72,7 @@ SHARE_CONFIG=1
 SHARE_SETTINGS=0
 SHARED_AUTH="${CLAUDE_BOX_SHARED_AUTH-1}"   # share one login across all boxes
 NO_NOTIFY=0
+LIST=0
 NAME=""
 DIR=""
 
@@ -76,6 +87,7 @@ while [ $# -gt 0 ]; do
         --share-settings) SHARE_SETTINGS=1 ;;
         --no-notify)      NO_NOTIFY=1 ;;
         --rebuild)        REBUILD=1 ;;
+        --list|--ls)      LIST=1 ;;
         -h|--help)      usage; exit 0 ;;
         --)             shift; break ;;
         -*)             echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -83,6 +95,14 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# --list: show every box on this daemon, found by label rather than by name, so
+# it still works for boxes renamed via CLAUDE_BOX_CONTAINER_NAME.
+if [ "$LIST" = "1" ]; then
+    docker ps -a --filter label=claude-box \
+        --format 'table {{.Names}}\t{{.Status}}\t{{.Label "claude-box.project"}}\t{{.Label "claude-box.dir"}}'
+    exit 0
+fi
 
 # Resolve the directory to mount.
 DIR="${DIR:-$PWD}"
@@ -267,6 +287,18 @@ if [ -z "${CLAUDE_BOX_CONTAINER_NAME:-}" ]; then
     done
 fi
 
+# Labels, so boxes are findable independently of their name -- `docker ps
+# --filter label=claude-box` catches every box even if someone overrode
+# CLAUDE_BOX_CONTAINER_NAME, and the metadata labels show up in the Docker
+# Desktop container inspector. These are purely for identification; the spoken
+# notification name ($SAY_LABEL) is separate and unaffected.
+BOX_LABELS=(
+    --label "claude-box=1"
+    --label "claude-box.project=$LABEL"
+    --label "claude-box.dir=$DIR"
+    --label "claude-box.workdir=$WORKDIR"
+)
+
 if [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
     SETTINGS="$(cat "$HOME/.claude/settings.json")"
 else
@@ -394,9 +426,44 @@ if [ -n "$BLOCK_CMDS" ] || [ -n "$BLOCK_PATHS" ]; then
     echo ">> Blocked:  cmds=[$BLOCK_CMDS] paths=[$BLOCK_PATHS]"
 fi
 
+# ---------------------------------------------------------------------------
+# Shutdown. `docker compose run --rm` leaves the container running if the CLI
+# dies without a clean exit -- the container belongs to the daemon and the --rm
+# cleanup is done by the CLI process. Closing the terminal window SIGHUPs the
+# whole foreground process group, killing our docker client and orphaning the
+# box, which then sits there forever holding the project mounts.
+#
+# So do the teardown ourselves: one trap that kills the notifier pipeline AND
+# stops/removes the container we started (name is unique, see above, so we can
+# never reap someone else's box). Trapping HUP is the point of the exercise;
+# INT/TERM/EXIT go through the same path so there is only one teardown.
+# Set CLAUDE_BOX_KEEP=1 to leave the container up on exit instead.
+# ---------------------------------------------------------------------------
+NOTIFIER_PID=""
+CLEANUP_DONE=0
+
+cleanup() {
+    [ "$CLEANUP_DONE" = "1" ] && return 0
+    CLEANUP_DONE=1
+    [ -n "$NOTIFIER_PID" ] && kill -- -"$NOTIFIER_PID" 2>/dev/null
+    if [ "${CLAUDE_BOX_KEEP:-0}" != "1" ] \
+       && docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+        echo ">> Stopping container $CONTAINER_NAME..." >&2
+        docker stop --timeout 5 "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        docker rm --force --volumes "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+# The signal traps re-exit so the EXIT trap (and thus cleanup) always runs, with
+# the conventional 128+signal status.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
 # Start the spoken-notification watcher: tail the notify log the box's hooks
 # append to and speak each line via `say`. macOS only (say); cleaned up on exit.
-NOTIFIER_PID=""
 if [ -n "$NOTIFY" ] && command -v say >/dev/null 2>&1; then
     : > "$NOTIFY_LOG"
     # Run in its own process group (set -m) with detached fds, so we can kill the
@@ -408,7 +475,6 @@ if [ -n "$NOTIFY" ] && command -v say >/dev/null 2>&1; then
       done ) </dev/null >/dev/null 2>&1 &
     NOTIFIER_PID=$!
     set +m
-    trap '[ -n "$NOTIFIER_PID" ] && kill -- -"$NOTIFIER_PID" 2>/dev/null' EXIT INT TERM
     echo ">> Notify:   spoken via \`say\` on finish + needs-input (name: $SAY_LABEL)"
 fi
 
@@ -417,5 +483,6 @@ echo ">> Starting container (Ctrl-D / 'exit' to leave)..."
 # Not exec'd: we stay alive so the trap can stop the notifier afterwards.
 STATUS=0
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" run --rm --name "$CONTAINER_NAME" \
+    "${BOX_LABELS[@]}" \
     ${SHARE_MOUNTS[@]+"${SHARE_MOUNTS[@]}"} claude "${CMD[@]}" || STATUS=$?
 exit $STATUS
