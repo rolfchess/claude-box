@@ -21,8 +21,9 @@ single mounted directory. Each mounted directory gets its **own memory**.
 ./claude-box --name api ~/x       # name the box (container name + notifications)
 ./claude-box --workspace ~/x      # mount at /workspace instead of the host path
 ./claude-box --no-share ~/x       # clean slate, no host ~/.claude config
-./claude-box --share-settings ~/x # also overlay host settings.json + CLAUDE.md
+./claude-box --no-share-settings ~/x # don't merge host settings.json + CLAUDE.md
 ./claude-box --rebuild            # rebuild the image (after editing the Dockerfile)
+./install-defaults.sh             # install the shared rules + hooks into ~/.claude
 ```
 
 First run builds the image (a few minutes). By default the project is mounted
@@ -71,9 +72,9 @@ Claude — it needs to *write* credentials, memory, and runtime state, and it
 would collapse the per-directory isolation). Instead, the static, shareable
 parts are overlaid **read-only** on top of the per-project home:
 
-| Shared by default (read-only)                                             | Not shared by default                                 |
-| ------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `skills/`, `commands/`, `agents/`, `rules/`, `scripts/`, `output-styles/` | `settings.json`, `CLAUDE.md` (use `--share-settings`) |
+| Shared by default (read-only)                                                                   | Not shared |
+| ----------------------------------------------------------------------------------------------- | ---------- |
+| `skills/`, `commands/`, `agents/`, `rules/`, `scripts/`, `output-styles/`, `settings.json`, `CLAUDE.md` | everything else |
 
 Memory, `projects/`, `todos/`, etc. stay **writable and per-project**.
 Credentials are **writable and shared** (see [Shared login](#shared-login)).
@@ -109,9 +110,68 @@ CLAUDE_BOX_CONFIG_DIRS="dticket othertool" ./claude-box ~/code/app
 This is unaffected by `--no-share` (which only governs `~/.claude`). Make a
 mount read-only by adding `:ro` to the relevant line in `claude-box`.
 
-`--share-settings` does **not** bind-mount your `settings.json`; it merges it
-into the generated box settings (see below) so the guardrail survives, and
-overlays your `CLAUDE.md` read-only.
+Your host `settings.json` is **not** bind-mounted; it is merged into the
+generated box settings (see below) so the guardrail survives, and your
+`CLAUDE.md` is overlaid read-only. Pass `--no-share-settings` to skip both.
+
+The merged file sits at the **user** level inside the box. A project's own
+`.claude/settings.json` and `.claude/settings.local.json` are read from the
+mounted project directory as before and still take precedence, so a project
+keeps its own model, permissions and hooks. Two details on how the levels
+combine: hooks from every level all run (they do not replace each other), and
+permissions are a union in which `deny` beats `allow`. So a hook or `deny` rule
+you set once on the host applies in every box, and the box guardrails are merged
+last so they always win.
+
+## Shared defaults: writing rules and hooks
+
+`suggestions/` holds a starting set of rules and hooks that every box (and your
+host Claude) can use. Install it into your own `~/.claude` with:
+
+```bash
+./install-defaults.sh              # install into ~/.claude
+./install-defaults.sh --dry-run    # show what would change, write nothing
+```
+
+It needs `jq` and `python3` on the host — `jq` to merge the settings, `python3`
+to run the hook.
+
+The directory mirrors `~/.claude`, so you can also copy the files by hand:
+
+| From `suggestions/`                            | To                                  | What it does                                                     |
+| ---------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| `rules/writing-style.md`                       | `~/.claude/rules/`                  | Plain-English writing rules, loaded as a global instruction       |
+| `scripts/writing-style/`                       | `~/.claude/scripts/`                | `PreToolUse` hook that blocks a `Write`/`Edit` using a banned word |
+| `settings.json`                                | merged into `~/.claude/settings.json` | Registers the hook, denies reads of `.env`/secrets, asks before `git commit`/`push` |
+
+Installing on the host is enough for every box, because `claude-box` mounts
+`~/.claude/rules` and `~/.claude/scripts` read-only and merges
+`~/.claude/settings.json` (see [Host config sharing](#host-config-sharing)).
+The hook is registered as `$HOME/.claude/scripts/...`, which resolves both on the
+host and inside a box, and it does nothing when the file is absent — so
+`--no-share` still gives a clean slate.
+
+`install-defaults.sh` merges, never replaces: your existing `deny`/`ask` entries
+and hooks are kept, the writing-style hook is added only if it isn't there
+already, and a timestamped backup of `settings.json` is written first. Running it
+twice changes nothing the second time, and an `allowlist.txt` you have already
+edited is left alone.
+
+### Living with the writing-style hook
+
+When the hook blocks a write, it names the word and Claude rewords. If a banned
+word is genuinely right, add the whole phrase (a clause or a sentence, not a bare
+word) to `~/.claude/scripts/writing-style/allowlist.txt`; only text inside that
+phrase is exempt. After three blocks on the same file the hook tells Claude to
+stop rewriting and ask you instead.
+
+Inside a box that file is on a read-only mount, so edit it on the host. Drop the
+`:ro` from the `scripts` mount in `claude-box` if you would rather let Claude
+edit it in the box.
+
+Edit `FORBIDDEN` in `check-forbidden-words.py` to change the word list, and
+`rules/writing-style.md` to change the guidance. Keep the two in step: the rules
+file is what Claude reads, the script is what enforces it.
 
 ## Blocking specific commands (without prompts for everything else)
 
@@ -201,3 +261,5 @@ If you don't need it, remove the `/var/run/docker.sock` volume from
 | `docker-compose.yml` | Service, volumes, Testcontainers env                |
 | `Dockerfile`         | Image: git, glab, Maven/JDK 21, Node, Claude Code   |
 | `entrypoint.sh`      | Fixes socket perms, drops root → `claude` user      |
+| `install-defaults.sh` | Installs `suggestions/` into your `~/.claude`       |
+| `suggestions/`       | Shared writing rules + hooks, laid out like `~/.claude` |

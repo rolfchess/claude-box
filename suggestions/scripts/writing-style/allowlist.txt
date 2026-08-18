@@ -1,0 +1,10 @@
+# Phrases the writing-style hook should NOT block.
+# One phrase per line, case-insensitive. Lines starting with # are comments.
+#
+# Each line is an exact phrase. The hook exempts only the text that phrase covers,
+# so a banned word stays blocked everywhere except inside the phrase you list here.
+# Prefer a whole clause or sentence, not a bare word. A bare word would exempt that
+# word in every position, which is what we want to avoid.
+#
+# Example (allows one sentence that must name a banned word, without un-banning it):
+# the word caveat is latin and not plain english

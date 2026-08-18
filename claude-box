@@ -13,8 +13,11 @@
 # instead.
 #
 # By default your host ~/.claude skills, commands, agents, rules and scripts
-# are overlaid read-only inside the box (your settings.json/CLAUDE.md are not,
-# unless you pass --share-settings). Memory stays writable and per-project, but
+# are overlaid read-only inside the box, and your host settings.json is merged
+# into the box's user-level settings (so hooks and deny rules you set once on the
+# host apply in every box). A project's own .claude/settings.json still wins over
+# it, and the box guardrails below are applied last. Pass --no-share-settings for
+# the old behaviour. Memory stays writable and per-project, but
 # your Claude login is shared across all boxes via a single credentials file, so
 # you log in once for every worktree/project. Pass --no-shared-auth to keep
 # credentials per-directory instead.
@@ -52,7 +55,8 @@
 #   --workspace       Mount the project at /workspace instead of its host path.
 #   --no-share        Don't overlay any host ~/.claude config (clean slate).
 #   --no-shared-auth  Don't share the login; keep credentials per-directory.
-#   --share-settings  Merge host settings.json + overlay CLAUDE.md (read-only).
+#   --no-share-settings
+#                     Don't merge host settings.json / overlay CLAUDE.md.
 #   --no-notify       Don't speak notifications (same as CLAUDE_BOX_NOTIFY="").
 #   --rebuild         Force a rebuild of the image before starting.
 #   --list            List running claude-box containers and exit.
@@ -69,7 +73,7 @@ CMD=(claude --dangerously-skip-permissions)
 MIRROR_PATH=1
 REBUILD=0
 SHARE_CONFIG=1
-SHARE_SETTINGS=0
+SHARE_SETTINGS="${CLAUDE_BOX_SHARE_SETTINGS-1}"   # merge host settings.json (hooks, deny rules)
 SHARED_AUTH="${CLAUDE_BOX_SHARED_AUTH-1}"   # share one login across all boxes
 NO_NOTIFY=0
 LIST=0
@@ -82,9 +86,10 @@ while [ $# -gt 0 ]; do
         --name)           NAME="${2-}"; shift ;;
         --name=*)         NAME="${1#*=}" ;;
         --workspace)      MIRROR_PATH=0 ;;
-        --no-share)       SHARE_CONFIG=0 ;;
+        --no-share)       SHARE_CONFIG=0; SHARE_SETTINGS=0 ;;
         --no-shared-auth) SHARED_AUTH=0 ;;
-        --share-settings) SHARE_SETTINGS=1 ;;
+        --share-settings) SHARE_SETTINGS=1 ;;   # kept: now the default
+        --no-share-settings) SHARE_SETTINGS=0 ;;
         --no-notify)      NO_NOTIFY=1 ;;
         --rebuild)        REBUILD=1 ;;
         --list|--ls)      LIST=1 ;;
@@ -421,6 +426,9 @@ if [ "${#SHARE_MOUNTS[@]}" -gt 0 ]; then
 fi
 if [ "$SHARED_AUTH" = "1" ]; then
     echo ">> Auth:     shared login -> $SHARED_CREDS"
+fi
+if [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
+    echo ">> Settings: host settings.json merged (project settings still win)"
 fi
 if [ -n "$BLOCK_CMDS" ] || [ -n "$BLOCK_PATHS" ]; then
     echo ">> Blocked:  cmds=[$BLOCK_CMDS] paths=[$BLOCK_PATHS]"

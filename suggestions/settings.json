@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/secrets/**)",
+      "Read(**/*credentials*.{json,yaml,yml,env,txt,conf,properties})"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/check-forbidden-words.py\"; [ -f \"$f\" ] && exec python3 \"$f\"; exit 0",
+            "statusMessage": "Checking writing style"
+          }
+        ]
+      }
+    ]
+  }
+}
