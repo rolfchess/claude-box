@@ -134,36 +134,67 @@ host Claude) can use. Install it into your own `~/.claude` with:
 ```
 
 It needs `jq` and `python3` on the host — `jq` to merge the settings, `python3`
-to run the hook.
+to run the hooks.
 
 The directory mirrors `~/.claude`, so you can also copy the files by hand:
 
 | From `suggestions/`                            | To                                  | What it does                                                     |
 | ---------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------- |
 | `rules/writing-style.md`                       | `~/.claude/rules/`                  | Plain-English writing rules, loaded as a global instruction       |
-| `scripts/writing-style/`                       | `~/.claude/scripts/`                | `PreToolUse` hook that blocks a `Write`/`Edit` using a banned word |
-| `settings.json`                                | merged into `~/.claude/settings.json` | Registers the hook, denies reads of `.env`/secrets, asks before `git commit`/`push` |
+| `scripts/writing-style/`                       | `~/.claude/scripts/`                | Two hooks: one blocks a write that uses a banned word, one checks files changed any other way |
+| `settings.json`                                | merged into `~/.claude/settings.json` | Registers both hooks, denies reads of `.env`/secrets, asks before `git commit`/`push` |
 
 Installing on the host is enough for every box, because `claude-box` mounts
 `~/.claude/rules` and `~/.claude/scripts` read-only and merges
 `~/.claude/settings.json` (see [Host config sharing](#host-config-sharing)).
-The hook is registered as `$HOME/.claude/scripts/...`, which resolves both on the
-host and inside a box, and it does nothing when the file is absent — so
+Both hooks are registered as `$HOME/.claude/scripts/...`, which resolves on the
+host and inside a box alike, and they do nothing when the file is absent — so
 `--no-share` still gives a clean slate.
 
 `install-defaults.sh` merges, never replaces: your existing `deny`/`ask` entries
-and hooks are kept, the writing-style hook is added only if it isn't there
-already, and a timestamped backup of `settings.json` is written first. Running it
-twice changes nothing the second time, and an `allowlist.txt` you have already
-edited is left alone.
+and hooks are kept, a writing-style hook is added only if its command is not
+registered already, and a hook from an earlier install has its matcher brought up
+to date instead of duplicated. A timestamped backup of `settings.json` is written
+first. Running it twice changes nothing the second time, and an `allowlist.txt`
+you have already edited is left alone.
 
-### Living with the writing-style hook
+### How the two checks fit together
 
-When the hook blocks a write, it names the word and Claude rewords. If a banned
-word is genuinely right, add the whole phrase (a clause or a sentence, not a bare
-word) to `~/.claude/scripts/writing-style/allowlist.txt`; only text inside that
-phrase is exempt. After three blocks on the same file the hook tells Claude to
-stop rewriting and ask you instead.
+`check-forbidden-words.py` runs **before** a `Write`, `Edit`, `MultiEdit` or
+`NotebookEdit` and reads the text the call would put in the file. A banned word
+stops the write, and Claude rewords before anything reaches disk.
+
+That hook only sees what a tool call passes as its input. A `sed` command, a
+heredoc, an MCP server or a subagent writes the file directly, so there is
+nothing for it to read — which is how a banned word used to slip through.
+`scan-changed-files.py` checks those: it runs **after** every `Bash` call and
+again when Claude stops, finds the changed lines with `git diff`, and matches
+them against the same word list. The write has already happened by then, so it
+names the file and line and Claude fixes it afterwards.
+
+It reads changes, not the tree. Git compares the stat data cached in its index
+and opens only the files whose stat differs, and only added lines are scanned.
+On a 4000-file, 2.8 GB repository the check takes about 0.35 seconds, nearly all
+of it process startup. A violation is reported once per session, so a working
+tree that is already dirty is not re-reported on every `Bash` call.
+
+Three things it does not check:
+
+- **Work outside a git repository.** The scan needs `git diff` to find changes,
+  so it does nothing elsewhere — including `~/.claude` itself.
+- **Files you edit yourself.** Hooks only see what Claude does.
+- **Generated files.** A file with more than 400 added lines is named in the
+  message and left unscanned, so a rebuilt data file does not bury the report.
+
+### Living with the writing-style hooks
+
+When the first hook blocks a write, it names the word and Claude rewords. The
+second hook reports the file and line instead, because the write already
+happened. If a banned word is genuinely right, add the whole phrase (a clause or
+a sentence, not a bare word) to
+`~/.claude/scripts/writing-style/allowlist.txt`; only text inside that phrase is
+exempt. After three blocks on the same file the hook tells Claude to stop
+rewriting and ask you instead.
 
 Inside a box that file is on a read-only mount, so edit it on the host. Drop the
 `:ro` from the `scripts` mount in `claude-box` if you would rather let Claude
@@ -171,7 +202,9 @@ edit it in the box.
 
 Edit `FORBIDDEN` in `check-forbidden-words.py` to change the word list, and
 `rules/writing-style.md` to change the guidance. Keep the two in step: the rules
-file is what Claude reads, the script is what enforces it.
+file is what Claude reads, the script is what enforces it. `scan-changed-files.py`
+imports the list, the allowlist and the skipped paths from
+`check-forbidden-words.py`, so both hooks stay in step on their own.
 
 ## Blocking specific commands (without prompts for everything else)
 

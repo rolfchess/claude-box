@@ -5,9 +5,13 @@ The forbidden words come from ~/.claude/rules/writing-style.md. When one is foun
 the hook exits with code 2, which stops the tool call and shows the message below
 to Claude. Claude then rewords and tries again.
 
-Read the hook input JSON from stdin. For Write we scan `content`; for Edit we scan
-`new_string`. Files that legitimately quote the forbidden words (the rules doc, this
-script, and memory files) are skipped.
+Read the hook input JSON from stdin and scan the text the call would put in the
+file: `content` for Write, `new_string` for Edit, every `edits[].new_string` for
+MultiEdit, and `new_source` for NotebookEdit. Files that legitimately quote the
+forbidden words (the rules doc, this script, and memory files) are skipped.
+
+Changes made any other way -- a Bash command, an MCP server, a subagent -- are not
+visible here. scan-changed-files.py checks those against the same word list.
 
 Escape routes for a word that is genuinely correct:
 - Add the exact phrase (a whole clause or sentence) to allowlist.txt next to this
@@ -75,6 +79,7 @@ FORBIDDEN = [
     r"synerg(?:y|ies)",
     r"paradigm(?:s)?",
     r"tapestry",
+    r"seed(?:s|ed|ing)?",
     # Filler.
     r"basically",
     r"essentially",
@@ -197,6 +202,23 @@ def find_forbidden(content, phrases):
     return found
 
 
+def new_content(tool_input):
+    """The text a Write, Edit, MultiEdit or NotebookEdit call would put in the file.
+
+    Write stores it in `content`, Edit in `new_string`, MultiEdit in a list of
+    `edits` each with their own `new_string`, and NotebookEdit in `new_source`.
+    """
+    parts = []
+    for key in ("content", "new_string", "new_source"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    for edit in tool_input.get("edits") or []:
+        if isinstance(edit, dict) and isinstance(edit.get("new_string"), str):
+            parts.append(edit["new_string"])
+    return "\n".join(parts)
+
+
 def state_path(file_path):
     key = hashlib.sha1(file_path.encode("utf-8")).hexdigest()
     directory = os.path.join(tempfile.gettempdir(), "claude-writing-style")
@@ -239,12 +261,12 @@ def main() -> int:
         return 0  # never block on a hook failure
 
     tool_input = data.get("tool_input") or {}
-    file_path = tool_input.get("file_path", "")
+    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
 
     if any(marker in file_path for marker in SKIP_PATH_MARKERS):
         return 0
 
-    content = tool_input.get("content") or tool_input.get("new_string") or ""
+    content = new_content(tool_input)
     if not content:
         return 0
 

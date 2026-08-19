@@ -14,11 +14,48 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
             "command": "f=\"$HOME/.claude/scripts/writing-style/check-forbidden-words.py\"; [ -f \"$f\" ] && exec python3 \"$f\"; exit 0",
+            "statusMessage": "Checking writing style"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/scan-changed-files.py\"; [ -f \"$f\" ] && exec python3 \"$f\" --mode=bash; exit 0",
+            "timeout": 15,
+            "statusMessage": "Checking writing style"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/scan-changed-files.py\"; [ -f \"$f\" ] && exec python3 \"$f\" --mode=stop; exit 0",
+            "timeout": 15,
+            "statusMessage": "Checking writing style"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/scan-changed-files.py\"; [ -f \"$f\" ] && exec python3 \"$f\" --mode=stop; exit 0",
+            "timeout": 15,
             "statusMessage": "Checking writing style"
           }
         ]
