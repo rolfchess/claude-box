@@ -22,6 +22,17 @@
             "statusMessage": "Checking writing style"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/check-review-notes.py\"; [ -f \"$f\" ] && exec python3 \"$f\"; exit 0",
+            "timeout": 10,
+            "statusMessage": "Checking the note"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -37,6 +48,39 @@
         ]
       }
     ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/inject-rules.py\"; [ -f \"$f\" ] && exec python3 \"$f\" --mode=batch; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/inject-rules.py\"; [ -f \"$f\" ] && exec python3 \"$f\" --mode=prompt; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/inject-rules.py\"; [ -f \"$f\" ] && exec python3 \"$f\" --mode=compact; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -45,6 +89,18 @@
             "command": "f=\"$HOME/.claude/scripts/writing-style/scan-changed-files.py\"; [ -f \"$f\" ] && exec python3 \"$f\" --mode=stop; exit 0",
             "timeout": 15,
             "statusMessage": "Checking writing style"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/writing-style/check-prose-style.py\"; [ -f \"$f\" ] && exec python3 \"$f\"; exit 0",
+            "timeout": 300,
+            "async": true,
+            "asyncRewake": true,
+            "statusMessage": "Reading the changed prose"
           }
         ]
       }

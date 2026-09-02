@@ -11,6 +11,17 @@
 #   scripts/writing-style/*                       -> ~/.claude/scripts/
 #   settings.json (hooks + deny/ask rules)        -> merged into ~/.claude/settings.json
 #
+# The hooks do two jobs. Three of them enforce the word list: one blocks a write
+# that uses a banned word, one reports words that reached a file another way, and
+# one blocks a merge request note that uses one.
+# The rest keep the rules where the model reads them: they print the rules
+# again on every user turn, every fifteenth tool batch, and in the compact
+# instructions. A fourth script sends the changed documentation and the changed
+# comments in code to a small model to check what a regex cannot; it is
+# off until you put
+# "env": { "CLAUDE_WRITING_STYLE_LLM": "1" } in your settings.json. A shell
+# export reaches a host session only, never a box.
+#
 # claude-box mounts ~/.claude/rules and ~/.claude/scripts read-only into every
 # box and merges ~/.claude/settings.json into the box settings, so installing on
 # the host is all that is needed. A project's own .claude/settings.json still
@@ -31,7 +42,7 @@ DRY_RUN=0
 [ "${1-}" = "--dry-run" ] && DRY_RUN=1
 
 command -v jq >/dev/null 2>&1 || { echo "install-defaults: jq is required" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || echo "install-defaults: warning: python3 not found, the hook will do nothing" >&2
+command -v python3 >/dev/null 2>&1 || echo "install-defaults: warning: python3 not found, the hooks will do nothing" >&2
 [ -d "$SRC" ] || { echo "install-defaults: $SRC not found" >&2; exit 1; }
 
 say() { echo ">> $*"; }
@@ -112,3 +123,10 @@ else
 fi
 
 say "Done. Restart Claude Code (and any running box) to pick this up."
+
+if [ "$(jq -r '.env.CLAUDE_WRITING_STYLE_LLM // ""' "$SETTINGS" 2>/dev/null)" = "1" ]; then
+    say "The model-backed prose check is on."
+else
+    say "The model-backed prose check is off. Switch it on by adding this to $SETTINGS:"
+    say '  "env": { "CLAUDE_WRITING_STYLE_LLM": "1" }'
+fi

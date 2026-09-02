@@ -141,14 +141,14 @@ The directory mirrors `~/.claude`, so you can also copy the files by hand:
 | From `suggestions/`                            | To                                  | What it does                                                     |
 | ---------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------- |
 | `rules/writing-style.md`                       | `~/.claude/rules/`                  | Plain-English writing rules, loaded as a global instruction       |
-| `scripts/writing-style/`                       | `~/.claude/scripts/`                | Two hooks: one blocks a write that uses a banned word, one checks files changed any other way |
-| `settings.json`                                | merged into `~/.claude/settings.json` | Registers both hooks, denies reads of `.env`/secrets, asks before `git commit`/`push` |
+| `scripts/writing-style/`                       | `~/.claude/scripts/`                | Five scripts: three enforce the word list, one prints the rules again where the model reads them, one sends the changed prose to a small model |
+| `settings.json`                                | merged into `~/.claude/settings.json` | Registers the hooks, denies reads of `.env`/secrets, asks before `git commit`/`push` |
 
 Installing on the host is enough for every box, because `claude-box` mounts
 `~/.claude/rules` and `~/.claude/scripts` read-only and merges
 `~/.claude/settings.json` (see [Host config sharing](#host-config-sharing)).
-Both hooks are registered as `$HOME/.claude/scripts/...`, which resolves on the
-host and inside a box alike, and they do nothing when the file is absent — so
+Every hook is registered as `$HOME/.claude/scripts/...`, which resolves on the
+host and inside a box alike, and each does nothing when its file is absent — so
 `--no-share` still gives a clean slate.
 
 `install-defaults.sh` merges, never replaces: your existing `deny`/`ask` entries
@@ -158,7 +158,7 @@ to date instead of duplicated. A timestamped backup of `settings.json` is writte
 first. Running it twice changes nothing the second time, and an `allowlist.txt`
 you have already edited is left alone.
 
-### How the two checks fit together
+### How the word-list checks fit together
 
 `check-forbidden-words.py` runs **before** a `Write`, `Edit`, `MultiEdit` or
 `NotebookEdit` and reads the text the call would put in the file. A banned word
@@ -186,6 +186,114 @@ Three things it does not check:
 - **Generated files.** A file with more than 400 added lines is named in the
   message and left unscanned, so a rebuilt data file does not bury the report.
 
+### Review comments on a merge request
+
+A review comment is prose, and the rules apply to it. Neither word-list hook saw
+one: a note goes out through `glab` or `post-draft.py` and never reaches a file,
+so there was nothing for them to read.
+
+`check-review-notes.py` runs **before** a `Bash` call, takes the note text out of
+the command and matches it against the same word list. A banned word stops the
+call and Claude rewords before anything reaches GitLab. It checks three shapes:
+
+| Command | Where the text is |
+| ------- | ----------------- |
+| `glab api .../draft_notes\|notes\|discussions` | the heredoc body |
+| `post-draft.py general\|file\|reply` | the heredoc body |
+| `glab mr note\|comment` | the value of `-m` or `--message` |
+
+A `GET` on `.../notes` has no body, so it passes. A heredoc in an unrelated
+command is not read at all, because the command must name one of the three above.
+What the hook cannot see is a body read from a file or held in a shell variable:
+the text is not in the command then. Repeated blocks are counted per merge
+request, so after three the message tells Claude to stop rewriting and ask you.
+
+### Keeping the rules where the model reads them
+
+The rules are part of every request, in the instructions block near the start.
+Nothing removes them, not even compaction. What fades is attention: the further a
+rule is from the end of the context, the less it shapes the writing. After a
+hundred thousand tokens of code and tool output, the rules are ignored while they
+are still in the request.
+
+`inject-rules.py` prints the rules again at the end of the context. It runs on
+three events:
+
+| Event | When | What it does |
+| ----- | ---- | ------------ |
+| `UserPromptSubmit` | every message you send | Prints the rules, which land right after your prompt |
+| `PostToolBatch` | after each batch of tool calls resolves | Prints them every fifteenth batch, and after three when the batch wrote a `.md` file. This is the only place to print them in a long run with no message from you |
+| `PreCompact` | before compaction | Asks the compactor to keep the rules in the summary, word for word |
+
+The rules file is 41 lines, so one print costs about 700 tokens. Injected context
+is added after the cached part of the request, so it does not cost a cache miss.
+`CLAUDE_WRITING_STYLE_EVERY_N` changes the batch interval.
+
+### The model-backed check
+
+A regex checks words. It cannot check short sentences, one idea per sentence,
+hedging, a dropped subject, or whether a comment describes the thing itself.
+`check-prose-style.py` sends the changed documentation lines and the rules to a
+small model and reports what comes back.
+
+It is off until you add this to `~/.claude/settings.json`:
+
+```json
+"env": { "CLAUDE_WRITING_STYLE_LLM": "1" }
+```
+
+Claude Code puts that block in the environment of every hook it runs, and
+`claude-box` copies the host `settings.json` into each box (`claude-box:307`), so
+one entry covers the host and every box. An `export` in your shell reaches a host
+session only. A box is started by `docker compose run`, which passes on nothing
+from your shell — only the variables listed in `docker-compose.yml`. Add
+`CLAUDE_WRITING_STYLE_LLM: ${CLAUDE_WRITING_STYLE_LLM:-}` to the `environment:`
+block there if you would rather switch it on per box from the shell.
+
+It runs when the turn ends, once per turn, over two kinds of prose: the added
+lines in `.md`, `.txt` and similar files, and the changed comments and docstrings
+in code files. It knows `//` and `/* */` for Kotlin, Java and TypeScript, `#` for
+Python, Bash, YAML and TOML, and the Python docstring; `COMMENT_STYLE` in the
+script maps a suffix to one of those three. A shebang and a tool directive such
+as `# shellcheck` or `# type:` are left out, and a triple-quoted string assigned
+to a name is data, so it is left out too.
+
+A comment is sent with one line above it and three below, marked as context. The
+rules ask whether a comment describes the thing itself rather than its caller,
+and that cannot be judged without seeing the declaration under it. Context lines
+are labelled in the prompt and the judge is told never to report one. On a test
+file it found the caller-facing KDoc in Kotlin, the same fault in a Python
+docstring and a Bash comment, a dropped subject, and a comment on
+self-explanatory code — and reported no context line.
+
+One line is reported at most twice per session. Rewording a line changes what
+the judge calls the rule, so the same line used to come back under a new name and
+the rewriting never ended. Past `LINE_LIMIT` findings the line is left out of the
+request. The judge is also told to report each line once, with the clearest
+breach, and to count a metaphor only where a reader could take it the wrong way —
+without that it reports an ordinary verb such as "a rule sits at the start".
+
+Set `CLAUDE_WRITING_STYLE_NO_COMMENTS` to `1` to check documentation files only.
+At most 120 documentation lines and 90 comment lines are sent, 30 of them per
+file, so one heavily commented file leaves room for the others.
+
+The judge is a separate `claude -p --safe-mode` process, so it starts empty: no
+hooks, no `CLAUDE.md`, no rules of its own, and no way to start a second judge.
+It reads the rules and the changed lines, and answers with JSON. A fresh reader
+keeps to the rules in full, which is the whole reason to run the judge outside
+the session.
+
+Its hook entry sets `"async": true` and `"asyncRewake": true`, so the turn ends
+without waiting: the check runs in the background, which took 50 to 155 seconds
+in testing, and wakes Claude with the findings. Drop both fields from the entry
+if you would rather the turn wait for the answer.
+
+Two more settings, both optional and read the same way:
+`CLAUDE_WRITING_STYLE_MODEL` (default `haiku`) and
+`CLAUDE_WRITING_STYLE_LLM_TIMEOUT` (default 240 seconds). The same holds for
+`CLAUDE_WRITING_STYLE_EVERY_N` in the section above: put it in the `env` block,
+not in your shell, or the box will not see it.
+
 ### Living with the writing-style hooks
 
 When the first hook blocks a write, it names the word and Claude rewords. The
@@ -205,6 +313,8 @@ Edit `FORBIDDEN` in `check-forbidden-words.py` to change the word list, and
 file is what Claude reads, the script is what enforces it. `scan-changed-files.py`
 imports the list, the allowlist and the skipped paths from
 `check-forbidden-words.py`, so both hooks stay in step on their own.
+`inject-rules.py` and `check-prose-style.py` read `rules/writing-style.md` at run
+time, so a change to the rules reaches them with no edit.
 
 ## Blocking specific commands (without prompts for everything else)
 

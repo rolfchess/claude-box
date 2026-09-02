@@ -48,6 +48,10 @@ FORBIDDEN = [
     r"gating",
     r"hold onto",
     r"travel(?:s|ling|led)? with",
+    r"today(?:s)?",
+    r"hinges(?:s)?",
+    r"guard(?:s)?",
+    r"guarding",
     # Fancy verbs where a plain one works.
     r"scaffold(?:s|ed|ing)?",
     r"fold(?:s|ed|ing)?",
