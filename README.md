@@ -1,51 +1,106 @@
 # claude-box
 
-Run Claude Code inside an isolated Docker container, with permission prompts
-turned off (`--dangerously-skip-permissions`) but the blast radius limited to a
-single mounted directory. Each mounted directory gets its **own memory**.
+Run Claude Code inside a Docker container with permission prompts turned off
+(`--dangerously-skip-permissions`), where it can only reach one mounted
+directory. Each mounted directory gets its **own memory**.
 
-## What's inside the container
+Inside the image: `git`, `glab`, Maven 3.9 + JDK 21, Node.js 22 + Claude Code,
+and the Docker CLI (it talks to the host daemon, so Testcontainers works).
 
-- `git`
-- `glab` (GitLab CLI)
-- Maven 3.9 + JDK 21
-- Node.js 22 + Claude Code
-- Docker CLI (talks to the host daemon for Testcontainers)
+## Requirements
+
+- Docker. On a Mac, turn on *Settings → Advanced → "Allow the default Docker
+  socket to be used"*, otherwise `/var/run/docker.sock` does not exist to mount.
+- `jq` on the host.
+- macOS for the spoken notifications. Everything else works anywhere.
+
+## Install
+
+```bash
+git clone git@github.com:rolfchess/claude-box.git ~/code/claude-box
+~/code/claude-box/claude-box ~/code/my-app     # first run builds the image (a few minutes)
+```
+
+The script reads `docker-compose.yml` next to itself, so put the checkout on
+your `PATH` or make an alias. A symlink from somewhere else does not work.
+
+The rules and hooks in `suggestions/` are optional. Install them once on the
+host and every box gets them — see
+[Shared defaults](#shared-defaults-rules-and-hooks).
 
 ## Usage
 
 ```bash
-./claude-box                      # mount the current directory
-./claude-box ~/code/my-app        # mount a specific directory
-./claude-box --shell ~/x          # drop into a bash shell instead of Claude
-./claude-box --name api ~/x       # name the box (container name + notifications)
-./claude-box --workspace ~/x      # mount at /workspace instead of the host path
-./claude-box --no-share ~/x       # clean slate, no host ~/.claude config
-./claude-box --no-share-settings ~/x # don't merge host settings.json + CLAUDE.md
-./claude-box --rebuild            # rebuild the image (after editing the Dockerfile)
-./install-defaults.sh             # install the shared rules + hooks into ~/.claude
+claude-box                       # mount the current directory
+claude-box ~/code/my-app         # mount a specific directory
 ```
 
-First run builds the image (a few minutes). By default the project is mounted
-at its **real host path** inside the container (e.g. `~/code/my-app` →
-`/Users/you/code/my-app`) so Testcontainers file mounts line up — see below.
-Claude starts in that directory.
+| Flag | What it does |
+| ---- | ------------ |
+| `--shell` | Open a bash shell instead of Claude |
+| `--name NAME` | Name the box, for the container name and the spoken notifications |
+| `--workspace` | Mount the project at `/workspace` instead of its host path |
+| `--no-share` | Do not overlay any host `~/.claude` config (clean slate) |
+| `--no-share-settings` | Do not merge the host `settings.json`, do not overlay `CLAUDE.md` |
+| `--no-shared-auth` | Keep the Claude login per directory |
+| `--no-notify` | Do not speak notifications |
+| `--rebuild` | Rebuild the image, after editing the `Dockerfile` |
+| `--list` | List the boxes on this daemon and exit |
+| `--help` | Print the options |
 
-The container is named `claude-box-<name-or-directory>` (e.g. `claude-box-my-app`)
-rather than the random name compose would pick, so `docker ps` / `docker exec`
-stay readable with several boxes running. A `-2`, `-3`, … suffix is added if the
-name is taken; `CLAUDE_BOX_CONTAINER_NAME` overrides it entirely.
+| Variable | Default | What it does |
+| -------- | ------- | ------------ |
+| `CLAUDE_BOX_HOME` | `~/.claude-box` | Where the per-project state lives |
+| `CLAUDE_BOX_BLOCK` | `git commit,git push` | Blocked commands |
+| `CLAUDE_BOX_BLOCK_PATHS` | `.m2/repository` | Blocked paths |
+| `CLAUDE_BOX_CONFIG_DIRS` | `dticket` | Directories under `~/.config` to mount |
+| `CLAUDE_BOX_CONTAINER_NAME` | from the directory name | Container name |
+| `CLAUDE_BOX_KEEP` | `0` | `1` leaves the container up on exit |
+| `CLAUDE_BOX_NOTIFY` | `1` | `""` turns off the spoken notifications |
+| `CLAUDE_BOX_SHARED_AUTH` | `1` | `0` keeps the login per directory |
+| `CLAUDE_BOX_CREDENTIALS` | `~/.claude-box/credentials.json` | The shared login file |
+| `CLAUDE_BOX_CLAUDE_JSON` | `~/.claude-box/claude.json` | The shared onboarding state |
+| `CLAUDE_BOX_SHARE_SETTINGS` | `1` | `0` skips the settings merge |
+| `CLAUDE_BOX_NO_GIT_COMMONDIR` | `0` | `1` skips the worktree git mount |
+
+By default the project is mounted at its **real host path** inside the container
+(`~/code/my-app` → `/Users/you/code/my-app`) so Testcontainers file mounts line
+up — see [Testcontainers](#testcontainers). Claude starts in that directory.
 
 ### First-time setup inside the container
 
-- **Claude login:** Claude will print an OAuth URL. Open it in your Mac
-  browser, approve, paste the code back. The credentials are shared across all
-  boxes (see [Shared login](#shared-login)), so you log in once for every
-  worktree/project. Pass `--no-shared-auth` to keep the login per-directory.
-- **GitLab:** run `glab auth login`. Stored per-project under
+- **Claude login:** Claude prints an OAuth URL. Open it in your browser,
+  approve, paste the code back. The login is shared across all boxes, so you do
+  this once — see [Shared login](#shared-login).
+- **GitLab:** run `glab auth login`. Stored per project under
   `~/.claude-box/projects/<key>/glab`.
-- Your host `~/.gitconfig` (name/email) is mounted read-only, so commits are
-  attributed correctly.
+- Your host `~/.gitconfig` is mounted read-only, so commits get the right author.
+
+### Names, `--list` and shutdown
+
+The container is named `claude-box-<name-or-directory>` (`claude-box-my-app`)
+instead of the random name compose would pick, so `docker ps` and `docker exec`
+stay readable with several boxes up. A `-2`, `-3`, … suffix is added if the name
+is taken. Every box also has a `claude-box=1` label, so `claude-box --list` (or
+`docker ps --filter label=claude-box`) finds them all, even a renamed one.
+
+The container is stopped and removed when the script exits, including when you
+close the terminal window. `docker compose run --rm` on its own leaves the box
+running in that case. Set `CLAUDE_BOX_KEEP=1` to leave it up.
+
+### Spoken notifications
+
+On macOS the box speaks a line through `say` when Claude finishes a turn or needs
+your input, so you can leave it running. It says the `--name` value, or the
+directory name. The 60-second "waiting for your input" notification is left out:
+it is not actionable and it misfires while background agents are still running.
+
+### Git worktrees
+
+In a worktree, `.git` is a file pointing at the parent repository, outside the
+mounted directory, so git in the box cannot find its repository. `claude-box`
+bind-mounts that one parent `.git` directory at its real host path. Nothing else
+from the parent repository is mounted, and the guardrails below still apply.
 
 ## Per-directory memory
 
@@ -58,351 +113,162 @@ State lives on the host under `~/.claude-box/projects/<basename>-<hash>/`:
     glab/     <- GitLab CLI config
 ```
 
-The `<hash>` is derived from the full path, so two directories with the same
-name don't collide, and re-mounting the same directory always reuses its
-memory. The Maven cache (`~/.m2`) is a shared Docker volume across all projects
-(no point re-downloading dependencies per project).
-
-Override the base location with `CLAUDE_BOX_HOME=/some/path ./claude-box`.
+The `<hash>` comes from the full path, so two directories with the same name do
+not collide, and re-mounting a directory always reuses its memory. The Maven
+cache (`~/.m2`) is one Docker volume shared by all projects.
 
 ## Host config sharing
 
-Your host `~/.claude` is **not** used as the container's home (that would break
-Claude — it needs to *write* credentials, memory, and runtime state, and it
-would collapse the per-directory isolation). Instead, the static, shareable
-parts are overlaid **read-only** on top of the per-project home:
+Your host `~/.claude` is **not** used as the container's home. That would break
+Claude, which needs to *write* credentials, memory and runtime state, and it
+would undo the per-directory isolation. Instead the static parts are overlaid
+**read-only** on top of the per-project home:
 
-| Shared by default (read-only)                                                                   | Not shared |
-| ----------------------------------------------------------------------------------------------- | ---------- |
-| `skills/`, `commands/`, `agents/`, `rules/`, `scripts/`, `output-styles/`, `settings.json`, `CLAUDE.md` | everything else |
+| Shared by default (read-only) | Not shared |
+| ----------------------------- | ---------- |
+| `skills/`, `commands/`, `agents/`, `rules/`, `scripts/`, `output-styles/`, `CLAUDE.md` | everything else |
 
-Memory, `projects/`, `todos/`, etc. stay **writable and per-project**.
-Credentials are **writable and shared** (see [Shared login](#shared-login)).
+Memory, `projects/`, `todos/` and the rest stay **writable and per-project**.
 Use `--no-share` for a completely clean slate.
+
+Your `settings.json` is not mounted. It is merged into the generated box
+settings so the guardrails survive. The merged file sits at the **user** level,
+so a project's own `.claude/settings.json` and `.claude/settings.local.json`
+still win and keep their model, permissions and hooks. Hooks from every level
+all run, and permissions are a union where `deny` beats `allow`. So a hook or
+`deny` rule you set once on the host applies in every box, and the box
+guardrails are merged last so they always win. `--no-share-settings` skips the
+merge and the `CLAUDE.md` overlay.
 
 ### Shared login
 
-Because the state key is derived from the directory path, every worktree of a
-repo is a separate project — which would otherwise mean re-authenticating in
-each one. To avoid that, the Claude login is shared: a single credentials file
-at `~/.claude-box/credentials.json` is bind-mounted into every box at
-`~/.claude/.credentials.json`, on top of the per-project home. Log in once and
-all boxes — every worktree, every project — reuse the session.
+The state key comes from the directory path, so every worktree of a repository is
+a separate project, which would mean logging in again in each one. So the login
+is shared: one credentials file at `~/.claude-box/credentials.json` is
+bind-mounted into every box at `~/.claude/.credentials.json`, on top of the
+per-project home. The onboarding state (`~/.claude.json`) is shared the same way,
+so the theme and login prompts do not come back either.
 
-This is safe across token refresh: Claude writes the file in place on login,
-and on refresh its atomic rename fails with `EBUSY` against the bind-mount and
-falls back to an in-place copy, so the host file stays in sync.
+This survives a token refresh. Claude writes the file in place on login, and on
+refresh its atomic rename fails with `EBUSY` against the bind-mount and falls
+back to an in-place copy, so the host file stays in sync.
 
-- Disable with `--no-shared-auth` (or `CLAUDE_BOX_SHARED_AUTH=0`) to keep
-  credentials per-directory, as before.
-- Override the file location with `CLAUDE_BOX_CREDENTIALS=/some/path`.
+`--no-shared-auth` keeps both files per directory instead.
 
 ### App config (`~/.config/...`)
 
-So tools find their config natively, `~/.config/dticket` is mounted (if it
-exists on the host) at the same path inside the box — read-write, so the app
-behaves exactly as on the host. No flag needed. To mount more such dirs:
+So tools find their config natively, `~/.config/dticket` is mounted (if it exists
+on the host) at the same path in the box, read-write. No flag needed. Mount more
+with `CLAUDE_BOX_CONFIG_DIRS="dticket othertool"`. This is unaffected by
+`--no-share`, which only governs `~/.claude`. Add `:ro` to the line in
+`claude-box` to make a mount read-only.
+
+## Blocking specific commands
+
+The box runs with `--dangerously-skip-permissions`, but `deny` rules **and**
+`PreToolUse` hooks are still enforced in bypass mode. So you get no permission
+prompts while specific commands stay blocked. There are two lists, both written
+into the per-project Claude home and enforced by a `PreToolUse` hook
+(`hooks/block-cmds.sh`) that reads the real command and blocks it with `exit 2`,
+which catches compound commands and aliases. Deny rules are a visible second
+layer.
 
 ```bash
-CLAUDE_BOX_CONFIG_DIRS="dticket othertool" ./claude-box ~/code/app
+# Commands: each entry is a list of words that must appear in order
+# ("git commit" matches "git … commit").
+CLAUDE_BOX_BLOCK="git commit,git push" claude-box ~/code/app
+CLAUDE_BOX_BLOCK="" claude-box ~/code/app          # off
+
+# Paths: any command whose text mentions one of these is blocked. This stops
+# Claude decompiling jars or reading classes in the Maven repo, while `mvn`
+# itself still works, because Maven never writes that path into the command.
+CLAUDE_BOX_BLOCK_PATHS=".m2/repository,/secrets" claude-box ~/code/app
+CLAUDE_BOX_BLOCK_PATHS="" claude-box ~/code/app    # off
 ```
 
-This is unaffected by `--no-share` (which only governs `~/.claude`). Make a
-mount read-only by adding `:ro` to the relevant line in `claude-box`.
+The box rewrites its `settings.json` on each launch, so do not hand-edit it.
+Edit the two variables instead.
 
-Your host `settings.json` is **not** bind-mounted; it is merged into the
-generated box settings (see below) so the guardrail survives, and your
-`CLAUDE.md` is overlaid read-only. Pass `--no-share-settings` to skip both.
+> **Note:** `glab` and `git` reach the real remotes over the network with your
+> token. The sandbox contains the *filesystem*, not network actions. `git push`
+> is blocked by default. Add `glab api --method POST` style calls to
+> `CLAUDE_BOX_BLOCK` if you want those stopped too.
 
-The merged file sits at the **user** level inside the box. A project's own
-`.claude/settings.json` and `.claude/settings.local.json` are read from the
-mounted project directory as before and still take precedence, so a project
-keeps its own model, permissions and hooks. Two details on how the levels
-combine: hooks from every level all run (they do not replace each other), and
-permissions are a union in which `deny` beats `allow`. So a hook or `deny` rule
-you set once on the host applies in every box, and the box guardrails are merged
-last so they always win.
+## Testcontainers
 
-## Shared defaults: writing rules and hooks
+Testcontainers works: the box bind-mounts the host Docker socket
+(`/var/run/docker.sock`), so `mvn test` can start containers. They are
+**siblings** on the host daemon, not children of the box, which is why three
+things matter.
 
-`suggestions/` holds a starting set of rules and hooks that every box (and your
-host Claude) can use. Install it into your own `~/.claude` with:
+1. **Networking is already set up.** The compose file sets
+   `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal` and adds a `host-gateway`
+   host entry, so Testcontainers reaches the ports your test containers expose.
+   `getMappedPort()` and `getHost()` work as usual.
+2. **File mounts work by default.** When a test bind-mounts a file
+   (`MountableFile`, `withFileSystemBind`, `withClasspathResourceMapping`), the
+   **host daemon** resolves the source path, not the box. The project is mounted
+   at its real host path, so any path under it resolves the same on both sides.
+   Under `--workspace` that no longer holds — nothing under `/workspace` exists
+   on the host — so use `withCopyFileToContainer` / `withCopyToContainer`, which
+   copy through the Docker API. Mounts of files *outside* the project tree still
+   have to exist on the host either way.
+3. **Ryuk** cleans up leftover containers over the mounted socket. Set
+   `TESTCONTAINERS_RYUK_DISABLED=true` in `docker-compose.yml` only if you hit
+   problems.
+
+Mounting the Docker socket gives the container root-level control of your host's
+Docker. That is the deliberate trade-off for Testcontainers. Remove the
+`/var/run/docker.sock` volume from `docker-compose.yml` if you do not need it.
+
+## Shared defaults: rules and hooks
+
+`suggestions/` holds a starting set of rules — how to write, and what a commit
+message may say — and the hooks that enforce them. The directory mirrors
+`~/.claude`, so you can copy the files by hand, or:
 
 ```bash
 ./install-defaults.sh              # install into ~/.claude
 ./install-defaults.sh --dry-run    # show what would change, write nothing
 ```
 
-It needs `jq` and `python3` on the host — `jq` to merge the settings, `python3`
-to run the hooks.
+It needs `jq` on the host to merge the settings and `python3` to run the hooks.
+It merges, never replaces: your existing `deny`/`ask` entries and hooks are kept,
+a hook is added only if its command is not registered already, and a hook from an
+earlier install has its matcher brought up to date instead of duplicated. A
+timestamped backup of `settings.json` is written first. Running it twice changes
+nothing the second time, and an `allowlist.txt` you have edited is left alone.
 
-The directory mirrors `~/.claude`, so you can also copy the files by hand:
-
-| From `suggestions/`                            | To                                  | What it does                                                     |
-| ---------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------- |
-| `rules/writing-style.md`                       | `~/.claude/rules/`                  | Plain-English writing rules, loaded as a global instruction       |
-| `scripts/writing-style/`                       | `~/.claude/scripts/`                | Five scripts: three enforce the word list, one prints the rules again where the model reads them, one sends the changed prose to a small model |
-| `settings.json`                                | merged into `~/.claude/settings.json` | Registers the hooks, denies reads of `.env`/secrets, asks before `git commit`/`push` |
-
-Installing on the host is enough for every box, because `claude-box` mounts
+Installing on the host is enough for every box: `claude-box` mounts
 `~/.claude/rules` and `~/.claude/scripts` read-only and merges
-`~/.claude/settings.json` (see [Host config sharing](#host-config-sharing)).
-Every hook is registered as `$HOME/.claude/scripts/...`, which resolves on the
-host and inside a box alike, and each does nothing when its file is absent — so
-`--no-share` still gives a clean slate.
+`~/.claude/settings.json`. Every hook is registered as
+`$HOME/.claude/scripts/...`, which resolves on the host and inside a box alike,
+and each does nothing when its file is absent — so `--no-share` still gives a
+clean slate.
 
-`install-defaults.sh` merges, never replaces: your existing `deny`/`ask` entries
-and hooks are kept, a writing-style hook is added only if its command is not
-registered already, and a hook from an earlier install has its matcher brought up
-to date instead of duplicated. A timestamped backup of `settings.json` is written
-first. Running it twice changes nothing the second time, and an `allowlist.txt`
-you have already edited is left alone.
+| Script (`scripts/`) | Runs | What it reads |
+| ------------------- | ---- | ------------- |
+| `writing-style/check-forbidden-words.py` | before `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | The text the call would write. A banned word blocks the write, and Claude rewords before anything reaches disk |
+| `writing-style/scan-changed-files.py` | after every `Bash` call, and when Claude or a subagent stops | The added lines in `git diff`. The write has happened, so it names the file and line and Claude fixes it afterwards |
+| `writing-style/check-review-notes.py` | before a `Bash` call | The note text inside a `glab` or `post-draft.py` command, before it reaches GitLab |
+| `git/check-commit-message.py` | before a `Bash` call | The message in a commit, a pull request or a merge request. A line that credits Claude blocks the call |
+| `writing-style/inject-rules.py` | on your message, after a tool batch, before compaction | Nothing. It prints the rules again at the end of the context |
+| `writing-style/check-prose-style.py` | when the turn ends | The changed documentation lines and code comments, judged by a small model. Off by default |
 
-### How the word-list checks fit together
+`settings.json` registers the hooks, denies reads of `.env` and secrets, and asks
+before `git commit` and `git push`. `rules/writing-style.md` and
+`rules/git-commits.md` are the guidance itself, loaded as global instructions.
 
-`check-forbidden-words.py` runs **before** a `Write`, `Edit`, `MultiEdit` or
-`NotebookEdit` and reads the text the call would put in the file. A banned word
-stops the write, and Claude rewords before anything reaches disk.
-
-That hook only sees what a tool call passes as its input. A `sed` command, a
-heredoc, an MCP server or a subagent writes the file directly, so there is
-nothing for it to read — which is how a banned word used to slip through.
-`scan-changed-files.py` checks those: it runs **after** every `Bash` call and
-again when Claude stops, finds the changed lines with `git diff`, and matches
-them against the same word list. The write has already happened by then, so it
-names the file and line and Claude fixes it afterwards.
-
-It reads changes, not the tree. Git compares the stat data cached in its index
-and opens only the files whose stat differs, and only added lines are scanned.
-On a 4000-file, 2.8 GB repository the check takes about 0.35 seconds, nearly all
-of it process startup. A violation is reported once per session, so a working
-tree that is already dirty is not re-reported on every `Bash` call.
-
-Three things it does not check:
-
-- **Work outside a git repository.** The scan needs `git diff` to find changes,
-  so it does nothing elsewhere — including `~/.claude` itself.
-- **Files you edit yourself.** Hooks only see what Claude does.
-- **Generated files.** A file with more than 400 added lines is named in the
-  message and left unscanned, so a rebuilt data file does not bury the report.
-
-### Review comments on a merge request
-
-A review comment is prose, and the rules apply to it. Neither word-list hook saw
-one: a note goes out through `glab` or `post-draft.py` and never reaches a file,
-so there was nothing for them to read.
-
-`check-review-notes.py` runs **before** a `Bash` call, takes the note text out of
-the command and matches it against the same word list. A banned word stops the
-call and Claude rewords before anything reaches GitLab. It checks three shapes:
-
-| Command | Where the text is |
-| ------- | ----------------- |
-| `glab api .../draft_notes\|notes\|discussions` | the heredoc body |
-| `post-draft.py general\|file\|reply` | the heredoc body |
-| `glab mr note\|comment` | the value of `-m` or `--message` |
-
-A `GET` on `.../notes` has no body, so it passes. A heredoc in an unrelated
-command is not read at all, because the command must name one of the three above.
-What the hook cannot see is a body read from a file or held in a shell variable:
-the text is not in the command then. Repeated blocks are counted per merge
-request, so after three the message tells Claude to stop rewriting and ask you.
-
-### Keeping the rules where the model reads them
-
-The rules are part of every request, in the instructions block near the start.
-Nothing removes them, not even compaction. What fades is attention: the further a
-rule is from the end of the context, the less it shapes the writing. After a
-hundred thousand tokens of code and tool output, the rules are ignored while they
-are still in the request.
-
-`inject-rules.py` prints the rules again at the end of the context. It runs on
-three events:
-
-| Event | When | What it does |
-| ----- | ---- | ------------ |
-| `UserPromptSubmit` | every message you send | Prints the rules, which land right after your prompt |
-| `PostToolBatch` | after each batch of tool calls resolves | Prints them every fifteenth batch, and after three when the batch wrote a `.md` file. This is the only place to print them in a long run with no message from you |
-| `PreCompact` | before compaction | Asks the compactor to keep the rules in the summary, word for word |
-
-The rules file is 41 lines, so one print costs about 700 tokens. Injected context
-is added after the cached part of the request, so it does not cost a cache miss.
-`CLAUDE_WRITING_STYLE_EVERY_N` changes the batch interval.
-
-### The model-backed check
-
-A regex checks words. It cannot check short sentences, one idea per sentence,
-hedging, a dropped subject, or whether a comment describes the thing itself.
-`check-prose-style.py` sends the changed documentation lines and the rules to a
-small model and reports what comes back.
-
-It is off until you add this to `~/.claude/settings.json`:
-
-```json
-"env": { "CLAUDE_WRITING_STYLE_LLM": "1" }
-```
-
-Claude Code puts that block in the environment of every hook it runs, and
-`claude-box` copies the host `settings.json` into each box (`claude-box:307`), so
-one entry covers the host and every box. An `export` in your shell reaches a host
-session only. A box is started by `docker compose run`, which passes on nothing
-from your shell — only the variables listed in `docker-compose.yml`. Add
-`CLAUDE_WRITING_STYLE_LLM: ${CLAUDE_WRITING_STYLE_LLM:-}` to the `environment:`
-block there if you would rather switch it on per box from the shell.
-
-It runs when the turn ends, once per turn, over two kinds of prose: the added
-lines in `.md`, `.txt` and similar files, and the changed comments and docstrings
-in code files. It knows `//` and `/* */` for Kotlin, Java and TypeScript, `#` for
-Python, Bash, YAML and TOML, and the Python docstring; `COMMENT_STYLE` in the
-script maps a suffix to one of those three. A shebang and a tool directive such
-as `# shellcheck` or `# type:` are left out, and a triple-quoted string assigned
-to a name is data, so it is left out too.
-
-A comment is sent with one line above it and three below, marked as context. The
-rules ask whether a comment describes the thing itself rather than its caller,
-and that cannot be judged without seeing the declaration under it. Context lines
-are labelled in the prompt and the judge is told never to report one. On a test
-file it found the caller-facing KDoc in Kotlin, the same fault in a Python
-docstring and a Bash comment, a dropped subject, and a comment on
-self-explanatory code — and reported no context line.
-
-One line is reported at most twice per session. Rewording a line changes what
-the judge calls the rule, so the same line used to come back under a new name and
-the rewriting never ended. Past `LINE_LIMIT` findings the line is left out of the
-request. The judge is also told to report each line once, with the clearest
-breach, and to count a metaphor only where a reader could take it the wrong way —
-without that it reports an ordinary verb such as "a rule sits at the start".
-
-Set `CLAUDE_WRITING_STYLE_NO_COMMENTS` to `1` to check documentation files only.
-At most 120 documentation lines and 90 comment lines are sent, 30 of them per
-file, so one heavily commented file leaves room for the others.
-
-The judge is a separate `claude -p --safe-mode` process, so it starts empty: no
-hooks, no `CLAUDE.md`, no rules of its own, and no way to start a second judge.
-It reads the rules and the changed lines, and answers with JSON. A fresh reader
-keeps to the rules in full, which is the whole reason to run the judge outside
-the session.
-
-Its hook entry sets `"async": true` and `"asyncRewake": true`, so the turn ends
-without waiting: the check runs in the background, which took 50 to 155 seconds
-in testing, and wakes Claude with the findings. Drop both fields from the entry
-if you would rather the turn wait for the answer.
-
-Two more settings, both optional and read the same way:
-`CLAUDE_WRITING_STYLE_MODEL` (default `haiku`) and
-`CLAUDE_WRITING_STYLE_LLM_TIMEOUT` (default 240 seconds). The same holds for
-`CLAUDE_WRITING_STYLE_EVERY_N` in the section above: put it in the `env` block,
-not in your shell, or the box will not see it.
-
-### Living with the writing-style hooks
-
-When the first hook blocks a write, it names the word and Claude rewords. The
-second hook reports the file and line instead, because the write already
-happened. If a banned word is genuinely right, add the whole phrase (a clause or
-a sentence, not a bare word) to
-`~/.claude/scripts/writing-style/allowlist.txt`; only text inside that phrase is
-exempt. After three blocks on the same file the hook tells Claude to stop
-rewriting and ask you instead.
-
-Inside a box that file is on a read-only mount, so edit it on the host. Drop the
-`:ro` from the `scripts` mount in `claude-box` if you would rather let Claude
-edit it in the box.
-
-Edit `FORBIDDEN` in `check-forbidden-words.py` to change the word list, and
-`rules/writing-style.md` to change the guidance. Keep the two in step: the rules
-file is what Claude reads, the script is what enforces it. `scan-changed-files.py`
-imports the list, the allowlist and the skipped paths from
-`check-forbidden-words.py`, so both hooks stay in step on their own.
-`inject-rules.py` and `check-prose-style.py` read `rules/writing-style.md` at run
-time, so a change to the rules reaches them with no edit.
-
-## Blocking specific commands (without prompts for everything else)
-
-The box runs with `--dangerously-skip-permissions`, but in current Claude Code
-`deny` rules **and** `PreToolUse` hooks are still enforced in bypass mode. So
-you get zero permission prompts while specific commands stay blocked.
-
-There are two separate block lists. Both are written into the per-project
-Claude home and enforced by a **PreToolUse hook** (`hooks/block-cmds.sh`) that
-reads the real command and `exit 2` blocks it (catching compound commands and
-aliases), backed by visible **deny rules** for the command list:
-
-**1. Blocked commands** (`CLAUDE_BOX_BLOCK`, default `git commit,git push`) —
-each entry is a list of words that must appear in order (`git commit` matches
-`git … commit`).
-
-```bash
-CLAUDE_BOX_BLOCK="git commit,git push" ./claude-box ~/code/app
-CLAUDE_BOX_BLOCK="" ./claude-box ~/code/app   # turn this block off
-```
-
-**2. Blocked paths** (`CLAUDE_BOX_BLOCK_PATHS`, default `.m2/repository`) — any
-command whose text mentions one of these paths is blocked. This stops Claude
-decompiling/extracting jars or reading classes in the Maven repo
-(`~/.m2/repository`), while `mvn` itself still works because Maven never writes
-that path into the command.
-
-```bash
-CLAUDE_BOX_BLOCK_PATHS=".m2/repository,/secrets" ./claude-box ~/code/app
-CLAUDE_BOX_BLOCK_PATHS="" ./claude-box ~/code/app   # turn this block off
-```
-
-The box rewrites its `settings.json` on each launch, so don't hand-edit it —
-edit `CLAUDE_BOX_BLOCK` (or this script) instead.
-
-> **Still note:** `glab`/`git` reach the real remotes over the network with
-> your token — the sandbox contains the *filesystem*, not network actions.
-> `git push` is blocked by default; add any `glab api --method POST` style
-> calls to `CLAUDE_BOX_BLOCK` if you want those stopped too.
-
-## Testcontainers
-
-**Yes, Testcontainers works** — the container bind-mounts the host Docker
-socket (`/var/run/docker.sock`), so `mvn test` can start containers. A few
-things to know, because containers started by your tests are **siblings** on
-the host daemon, not children of the claude-box container:
-
-1. **Docker Desktop:** make sure *Settings → Advanced → "Allow the default
-   Docker socket to be used"* is enabled, otherwise `/var/run/docker.sock`
-   won't exist on the host to mount.
-
-2. **Networking is already configured.** The compose file sets
-   `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal` and adds a
-   `host-gateway` host entry, so Testcontainers reaches the ports your test
-   containers expose. `getMappedPort()` / `getHost()` work as usual.
-
-3. **File mounts — handled by default.** When a test bind-mounts a file into a
-   container (`MountableFile`, `withFileSystemBind`,
-   `withClasspathResourceMapping`), the **host daemon** resolves the source
-   path, not the claude-box container. To make those line up, the project is
-   mounted at its real host path by default (e.g. `/Users/you/app` →
-   `/Users/you/app`), so any source path under the project resolves identically
-   on host and container. No action needed.
-   - If you run with `--workspace` (project mounted at `/workspace`), this no
-     longer holds — paths under `/workspace` don't exist on the host. In that
-     mode, use `withCopyFileToContainer(...)` / `withCopyToContainer`, which
-     copy through the Docker API and always work regardless of mount path.
-   - Mounts of files *outside* the project tree (e.g. `/tmp/...`) still need to
-     exist on the host daemon either way.
-
-4. **Ryuk** (the resource reaper) runs fine over the mounted socket and cleans
-   up leftover containers. Disable it with `TESTCONTAINERS_RYUK_DISABLED=true`
-   in `docker-compose.yml` only if you hit issues.
-
-### Security note
-
-Mounting the Docker socket gives the container effective root-level control of
-your host's Docker. That's the deliberate trade-off for Testcontainers support.
-If you don't need it, remove the `/var/run/docker.sock` volume from
-`docker-compose.yml` for stricter isolation.
+What each hook sees and misses, the allowlist, and the settings for the
+model-backed check are in [`suggestions/README.md`](suggestions/README.md).
 
 ## Files
 
-| File                 | Purpose                                             |
-| -------------------- | --------------------------------------------------- |
-| `claude-box`         | Start script (build + run + mount + memory routing) |
-| `docker-compose.yml` | Service, volumes, Testcontainers env                |
-| `Dockerfile`         | Image: git, glab, Maven/JDK 21, Node, Claude Code   |
-| `entrypoint.sh`      | Fixes socket perms, drops root → `claude` user      |
-| `install-defaults.sh` | Installs `suggestions/` into your `~/.claude`       |
-| `suggestions/`       | Shared writing rules + hooks, laid out like `~/.claude` |
+| File | Purpose |
+| ---- | ------- |
+| `claude-box` | Start script: build, run, mounts, memory routing, guardrails |
+| `docker-compose.yml` | Service, volumes, Testcontainers env |
+| `Dockerfile` | Image: git, glab, Maven/JDK 21, Node, Claude Code |
+| `entrypoint.sh` | Fixes socket permissions, drops root → the `claude` user |
+| `install-defaults.sh` | Installs `suggestions/` into your `~/.claude` |
+| `suggestions/` | Shared rules and hooks, laid out like `~/.claude` |

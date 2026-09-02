@@ -33,6 +33,17 @@
             "statusMessage": "Checking the note"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.claude/scripts/git/check-commit-message.py\"; [ -f \"$f\" ] && exec python3 \"$f\"; exit 0",
+            "timeout": 10,
+            "statusMessage": "Checking the commit message"
+          }
+        ]
       }
     ],
     "PostToolUse": [

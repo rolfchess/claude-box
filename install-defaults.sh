@@ -7,20 +7,20 @@
 #   ./install-defaults.sh --dry-run  # show what would change, write nothing
 #
 # What it installs:
-#   rules/writing-style.md                        -> ~/.claude/rules/
-#   scripts/writing-style/*                       -> ~/.claude/scripts/
+#   rules/*.md                                    -> ~/.claude/rules/
+#   scripts/*/*.py                                -> ~/.claude/scripts/
 #   settings.json (hooks + deny/ask rules)        -> merged into ~/.claude/settings.json
 #
-# The hooks do two jobs. Three of them enforce the word list: one blocks a write
-# that uses a banned word, one reports words that reached a file another way, and
-# one blocks a merge request note that uses one.
-# The rest keep the rules where the model reads them: they print the rules
-# again on every user turn, every fifteenth tool batch, and in the compact
-# instructions. A fourth script sends the changed documentation and the changed
-# comments in code to a small model to check what a regex cannot; it is
-# off until you put
-# "env": { "CLAUDE_WRITING_STYLE_LLM": "1" } in your settings.json. A shell
-# export reaches a host session only, never a box.
+# The hooks do three jobs. Three of them enforce the word list: one blocks a
+# write that uses a banned word, one reports words that reached a file another
+# way, and one blocks a merge request note that uses one. One enforces the
+# commit rules: it blocks a commit or a request body that credits Claude. The
+# last two keep the writing rules where the model reads them: one prints the
+# rules again on every user turn, every fifteenth tool batch and in the compact
+# instructions, and one sends the changed documentation and the changed comments
+# in code to a small model to check what a regex cannot. That last one is off
+# until you put "env": { "CLAUDE_WRITING_STYLE_LLM": "1" } in your
+# settings.json. A shell export reaches a host session only, never a box.
 #
 # claude-box mounts ~/.claude/rules and ~/.claude/scripts read-only into every
 # box and merges ~/.claude/settings.json into the box settings, so installing on
@@ -48,18 +48,23 @@ command -v python3 >/dev/null 2>&1 || echo "install-defaults: warning: python3 n
 say() { echo ">> $*"; }
 run() { if [ "$DRY_RUN" = "1" ]; then echo "   would: $*"; else "$@"; fi; }
 
-# --- rules + script -------------------------------------------------------
-run mkdir -p "$DEST/rules" "$DEST/scripts/writing-style"
+# --- rules + scripts ------------------------------------------------------
+run mkdir -p "$DEST/rules"
 
 for f in "$SRC"/rules/*.md; do
     say "rules/$(basename "$f")"
     run cp "$f" "$DEST/rules/"
 done
 
-for f in "$SRC"/scripts/writing-style/*.py; do
-    say "scripts/writing-style/$(basename "$f")"
-    run cp "$f" "$DEST/scripts/writing-style/"
-    run chmod +x "$DEST/scripts/writing-style/$(basename "$f")"
+for dir in "$SRC"/scripts/*/; do
+    group="$(basename "$dir")"
+    run mkdir -p "$DEST/scripts/$group"
+    for f in "$dir"*.py; do
+        [ -e "$f" ] || continue
+        say "scripts/$group/$(basename "$f")"
+        run cp "$f" "$DEST/scripts/$group/"
+        run chmod +x "$DEST/scripts/$group/$(basename "$f")"
+    done
 done
 
 if [ -f "$DEST/scripts/writing-style/allowlist.txt" ]; then
