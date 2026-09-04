@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: block a commit or request body that credits Claude.
+"""Block a commit or request body that credits Claude.
+
+bash/check-bash-command.py calls check() for every Bash call, with the command
+already split into its skeleton and its heredoc bodies.
 
 A commit belongs to the user. A `Co-Authored-By: Claude` trailer, or a
 "Generated with Claude Code" line in a pull request body, puts the tool in the
 history instead. Both are forbidden by ~/.claude/rules/git-commits.md, and the
 model adds them anyway, because its own instructions ask for them.
 
-This hook reads the Bash command the call would run and blocks it when the
+The check reads the Bash command the call would run and reports it when the
 command creates a commit, a pull request or a merge request and its text has one
-of those lines. A hit exits with code 2, which stops the call and shows the
-message to Claude, so the line is removed before anything is written.
+of those lines. The caller then stops the call and shows the message to Claude,
+so the line is removed before anything is written.
 
-Which command creates one is decided on the command with its heredoc bodies
-removed, and the text of those bodies is then searched for the forbidden lines.
-That way `git commit -F -` with the message in a heredoc is caught, while a
-heredoc that merely writes *about* a trailer, such as this file or the README, is
-not. The forbidden line must also stand at the start of its own line, so a
-sentence that names a trailer is left alone.
+Which command creates one is decided on the skeleton, and the text of the
+heredoc bodies is then searched for the forbidden lines. That way
+`git commit -F -` with the message in a heredoc is caught, while a heredoc that
+merely writes *about* a trailer, such as this file or the README, is not. The
+forbidden line must also stand at the start of its own line, so a sentence that
+names a trailer is left alone.
 
 It reads the command itself, which covers `-m` and a heredoc body. It also reads
 a message or body file named on the command line. What it cannot see is a
@@ -25,7 +28,6 @@ editor. A git `commit-msg` hook is the place to catch those, because git runs it
 whatever wrote the message.
 """
 
-import json
 import os
 import re
 import sys
@@ -54,35 +56,12 @@ ATTRIBUTION = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-# A heredoc opener: << or <<-, an optional quote, then the terminator word.
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-
 # A file whose contents become the message or the body.
 MESSAGE_FILE = re.compile(
     r"(?:-F|--file|--body-file|--description-file)[=\s]+(?:'([^']*)'|\"([^\"]*)\"|(\S+))",
 )
 
 MAX_FILE_BYTES = 100_000
-
-
-def split_heredocs(command):
-    """The command without its heredoc bodies, and those bodies on their own."""
-    skeleton = []
-    bodies = []
-    pending = []        # terminators of the heredocs opened on the line just read
-    terminator = None
-    for line in command.splitlines():
-        if terminator is not None:
-            if line.strip() == terminator:
-                terminator = pending.pop(0) if pending else None
-            else:
-                bodies.append(line)
-            continue
-        skeleton.append(line)
-        pending = [match.group(2) for match in HEREDOC.finditer(line)]
-        if pending:
-            terminator = pending.pop(0)
-    return "\n".join(skeleton), "\n".join(bodies)
 
 
 def named_files(command):
@@ -107,38 +86,24 @@ def file_text(command):
     return "\n".join(parts)
 
 
-def main() -> int:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0  # never block on a hook failure
+def check(skeleton, bodies):
+    """The message to show Claude, or None when the command may run.
 
-    command = (data.get("tool_input") or {}).get("command")
-    if not isinstance(command, str):
-        return 0
-
-    skeleton, bodies = split_heredocs(command)
+    `skeleton` is the command without its heredoc bodies, `bodies` is those
+    bodies on their own.
+    """
     if not WRITES_MESSAGE.search(skeleton):
-        return 0
+        return None
 
     text = "\n".join([skeleton, bodies, file_text(skeleton)])
     found = ATTRIBUTION.search(text)
     if not found:
-        return 0
+        return None
 
-    print(
+    return (
         f'This message credits Claude: "{found.group(0).strip()}".\n'
         "A commit and a request body belong to the user, so no trailer or line "
         "may name Claude or Anthropic. See ~/.claude/rules/git-commits.md.\n"
         "Remove the line and run the command again. Do not ask whether to keep "
-        "it, and do not add it back later in the session.",
-        file=sys.stderr,
+        "it, and do not add it back later in the session."
     )
-    return 2
-
-
-if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except Exception:  # a hook failure must not block the call
-        sys.exit(0)

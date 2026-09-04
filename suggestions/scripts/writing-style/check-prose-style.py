@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Stop hook: judge changed prose against the writing-style rules.
 
-The word list in check-forbidden-words.py is a regex, so it catches banned words
-and nothing else. The rules also ask for short sentences, one idea per sentence,
-no hedging, complete sentences, and a comment that describes the thing itself
-rather than its caller. No regex can check those. A small model reading the rules
-and the changed lines can.
+The word list in words.txt is a regex, so it catches banned words and nothing
+else. The rules also ask for short sentences, one idea per sentence, no hedging,
+complete sentences, and a comment that describes the thing itself rather than
+its caller. No regex can check those. A small model reading the rules and the
+changed lines can.
+
+The judge is sent the rules without the word list. That list is enforced before
+the write lands, so sending it would only add a second report of the same word.
 
 Two kinds of prose are sent:
 
@@ -469,11 +472,13 @@ def main() -> int:
         return 0
 
     scanner = load_scanner()
-    root = scanner.repo_root(data.get("cwd") or os.getcwd())
+    rules = scanner.load_checker().rules_without_words(rules).strip()
+
+    session_id = data.get("session_id")
+    root = scanner.repo_root(data.get("cwd") or os.getcwd(), session_id)
     if not root:
         return 0
 
-    session_id = data.get("session_id")
     reported, counts = load_reported(session_id)
 
     lines = changed_lines(scanner, root)

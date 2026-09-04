@@ -250,14 +250,27 @@ clean slate.
 | ------------------- | ---- | ------------- |
 | `writing-style/check-forbidden-words.py` | before `Write`, `Edit`, `MultiEdit`, `NotebookEdit` | The text the call would write. A banned word blocks the write, and Claude rewords before anything reaches disk |
 | `writing-style/scan-changed-files.py` | after every `Bash` call, and when Claude or a subagent stops | The added lines in `git diff`. The write has happened, so it names the file and line and Claude fixes it afterwards |
-| `writing-style/check-review-notes.py` | before a `Bash` call | The note text inside a `glab` or `post-draft.py` command, before it reaches GitLab |
-| `git/check-commit-message.py` | before a `Bash` call | The message in a commit, a pull request or a merge request. A line that credits Claude blocks the call |
-| `writing-style/inject-rules.py` | on your message, after a tool batch, before compaction | Nothing. It prints the rules again at the end of the context |
+| `bash/check-bash-command.py` | before every `Bash` call | The command. It runs the two checks below in one process |
+| `git/commit-message.py` | called by the above | The message in a commit, a pull request or a merge request. A line that credits Claude blocks the call |
+| `writing-style/review-notes.py` | called by the above | The note text inside a `glab` or `post-draft.py` command, before it reaches GitLab |
+| `writing-style/inject-rules.py` | on your message, after a tool batch, before compaction | Nothing. It prints the rules again at the end of the context, without the word list a hook already enforces |
 | `writing-style/check-prose-style.py` | when the turn ends | The changed documentation lines and code comments, judged by a small model. Off by default |
 
 `settings.json` registers the hooks, denies reads of `.env` and secrets, and asks
 before `git commit` and `git push`. `rules/writing-style.md` and
 `rules/git-commits.md` are the guidance itself, loaded as global instructions.
+
+The words to avoid are in `scripts/writing-style/words.txt`, and nowhere else.
+Each line gives the word, the regex that matches every form of it, and the plain
+replacement. The hook builds its regexes from that file and names the
+replacement when it blocks, so the next attempt does not have to guess.
+`render-words.py` writes the list into the "Words to avoid" section of
+`rules/writing-style.md`, which `install-defaults.sh` does for you. Add a word to
+`words.txt`, run the installer, and both the hook and the rules are up to date.
+
+A group marked `hook-only` is blocked but left out of the rules file. Latin,
+idioms and jargon nouns are marked that way: a model hardly ever writes them, so
+a reminder in every session costs more than the rare block does.
 
 What each hook sees and misses, the allowlist, and the settings for the
 model-backed check are in [`suggestions/README.md`](suggestions/README.md).

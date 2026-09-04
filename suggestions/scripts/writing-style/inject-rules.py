@@ -18,6 +18,11 @@ Three modes, one per hook event. Each reads the hook input JSON from stdin.
     --mode=compact   PreCompact. Its stdout is appended to the compact
                      instructions, which keeps the rules in the summary.
 
+The generated word list is left out of what is printed. A regex already blocks
+every word in it before the write lands, and the block message names the
+replacement, so repeating the list mid-session adds nothing. What is printed is
+the part no regex can check, plus one line saying the hook holds the list.
+
 Injected context is cut off at 8000 characters and 200 lines, so a rules file
 longer than that is trimmed here first.
 
@@ -27,10 +32,15 @@ agentic loop, so this mode reports through stdout only.
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 import sys
 import tempfile
+
+sys.dont_write_bytecode = True
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 RULES = os.environ.get("CLAUDE_WRITING_STYLE_RULES") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"),
@@ -53,8 +63,20 @@ MAX_CHARS = 7500
 MAX_LINES = 180
 
 
+def load_checker():
+    """The check-forbidden-words module, imported by path.
+
+    Its file name has dashes, so a plain import statement does not reach it.
+    """
+    path = os.path.join(SCRIPT_DIR, "check-forbidden-words.py")
+    spec = importlib.util.spec_from_file_location("check_forbidden_words", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def rules_text():
-    """The rules, trimmed to what an injection can hold, or None."""
+    """The rules, without the word list, trimmed to what fits, or None."""
     try:
         with open(RULES, encoding="utf-8") as handle:
             text = handle.read().strip()
@@ -62,6 +84,10 @@ def rules_text():
         return None
     if not text:
         return None
+    try:
+        text = load_checker().rules_without_words(text).strip()
+    except Exception:
+        pass  # print the rules in full rather than none at all
     lines = text.splitlines()[:MAX_LINES]
     return "\n".join(lines)[:MAX_CHARS]
 

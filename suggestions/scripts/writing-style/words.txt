@@ -1,0 +1,146 @@
+# The words to avoid, and what to write instead.
+#
+# This file is the only place the list lives. check-forbidden-words.py builds its
+# regexes from it and names the replacement when it blocks a write.
+# render-words.py renders it into the "Words to avoid" section of
+# writing-style.md, which install-defaults.sh does for you. Edit this file, run
+# install-defaults.sh, and both the hook and the rules file are up to date.
+#
+# Format, one entry per line, fields separated by "|":
+#
+#   words | regex | replacement | note
+#
+#   words        The words as a reader sees them, separated by commas. They are
+#                quoted in the rules file. The first one is the regex when the
+#                regex field is empty, so it must be safe to read as one.
+#   regex        Optional. A regex covering every form of the word. It is matched
+#                case-insensitively, between word boundaries.
+#   replacement  What to write instead. It appears in the block message and in
+#                the rules file, as written here.
+#   note         Optional. One more sentence for the rules file.
+#
+# A line starting with "## " starts a group. Its text becomes a sub-heading in
+# the rules file. A group heading may name marks after the heading, in any
+# order. There are two kinds.
+#
+# How the regex is bounded:
+#
+#   word          the default: the regex must match a whole word.
+#   abbreviation  for a word that ends in a full stop, where a closing word
+#                 boundary does not fit.
+#
+# Whether the group is written into the rules file:
+#
+#   teach         the default: the group appears in writing-style.md, so the
+#                 model is told before it writes. Use it for a word a model
+#                 writes unprompted, where the reminder is worth its space in
+#                 the instructions.
+#   hook-only     the group is left out of writing-style.md. Use it for a word
+#                 a model hardly ever writes: one block with a named
+#                 replacement costs less than the space would, in every session
+#                 and every box.
+#
+# Both kinds of group are blocked. The mark decides only what the model is told
+# in advance.
+
+## A verb used of a thing that cannot do it
+carry, carries | carr(?:y|ies|ying|ied) | "has", "stores", "holds" | A column stores a value; it does not carry it.
+pinned, pinning | pinn(?:ed|ing) | "set", "stored", "fixed" | Write "set the provider on the order", not "pin the provider onto the order".
+surfaces, surfacing | surfac(?:es|ing|ed) | "appears", "shows", "is reported" | A paid invoice appears on the feed; it does not surface on it.
+holds onto | hold onto | "keeps", "stores" |
+travels with | travel(?:s|ling|led)? with | "goes with", "is stored on" |
+hinge, hinges | hinge(?:s)? | "depends on" |
+fold, folding | fold(?:s|ed|ing)? | "put", "move", "add", "merge" | Write "add the note to the README", not "fold the note into the README".
+seed, seeding | seed(?:s|ed|ing)? | "fill", "create the first", "set up" |
+
+## A fancy verb where a plain one works
+mint, minting | mint(?:s|ed|ing)? | "create", "make" |
+exercising | | "running", "using" |
+key on, keyed on | key(?:ed)? on | "based on", "uses X to decide", "checks X" |
+gate, gated, gating | gat(?:e|ed|ing) | "check", "condition", "switch" |
+guard, guards, guarding | guard(?:s|ing)? | "check", "checks", "checking" |
+scaffold, scaffolding | scaffold(?:s|ed|ing)? | "structure", "set up", "starter code" | Name the concrete thing.
+leverage | leverag(?:e|es|ed|ing) | "use" |
+utilise, utilize | utili[sz](?:e|es|ed|ing|ation) | "use" |
+facilitate | facilitat(?:e|es|ed|ing|ion) | "help", "let", "make X possible" |
+streamline | streamlin(?:e|es|ed|ing) | "shorten", "cut a step" |
+delve | delv(?:e|es|ed|ing) | "look at", "read" |
+empower | empower(?:s|ed|ing|ment)? | "let", "allow" |
+underpin | underpin(?:s|ned|ning)? | "support", "is the basis of" |
+bolster | bolster(?:s|ed|ing)? | "strengthen", "add to" |
+elevate | elevat(?:e|es|ed|ing) | "raise", "improve" |
+spearhead | spearhead(?:s|ed|ing)? | "lead", "run" |
+foster | foster(?:s|ed|ing)? | "encourage", "help" |
+boast | boast(?:s|ed|ing)? | "has" |
+
+## A vague or marketing adjective
+robust | | "solid", "reliable", or name the property |
+powerful | | Name what it does instead. |
+seamless, seamlessly | seamless(?:ly)? | "with no step in between", or cut it |
+intuitive | | "easy to learn", or name the property |
+delightful | | Cut it. |
+effortless, effortlessly | effortless(?:ly)? | "easy", or cut it |
+holistic | | "whole", "complete" |
+cutting-edge | | "new", or cut it |
+state-of-the-art | | "new", or cut it |
+best-in-class | | Cut it. |
+game-changer, game-changing | game-chang(?:er|ing) | Say what changes. |
+
+## A jargon noun | hook-only
+appetite | | "time", "worth it", "want to do X" | Appetite is for food, not code.
+synergy | synerg(?:y|ies) | "they work well together" |
+paradigm | paradigm(?:s)? | "model", "way of working" |
+tapestry | | "mix", "set" |
+
+## Filler
+basically | | Cut it. |
+essentially | | Cut it. |
+simply | | Cut it. |
+in order to | | "to" |
+
+## An idiom or a metaphor | hook-only
+escape hatch | escape hatch(?:es)? | "a way to override it", "an exception" | No euphemisms.
+deep dive | deep[ -]dive | "read it closely", "look at it in detail" |
+low-hanging fruit | | "the easy work" |
+move the needle | | "make a difference" |
+circle back | | "come back to it" |
+double down | | "do more of it" |
+lean into | | "use", "accept" |
+pave the way | | "make X possible" |
+baked in | baked[ -]in | "built in", "part of it" |
+out of the box | out[ -]of[ -]the[ -]box | "with no set-up", "as it comes" |
+at the end of the day | | "in the end", or cut it |
+spin up | (?:spin|spins|spinning|spun) up | "start", "create" |
+wire up | (?:wire|wires|wired|wiring) up | "connect", "register", "set up" |
+kick off | (?:kick|kicks|kicked|kicking) off | "start" |
+
+## A word that goes stale
+today | today(?:s)? | "now", or write the date |
+
+## Latin | hook-only
+caveat, caveats | caveat(?:s)? | "a limit", "a warning", "one thing to note" |
+vis-à-vis, vis-a-vis | vis-[àa]-vis | "about", "compared with" |
+per se | | Cut it. |
+ergo | | "so", "therefore" |
+de facto | | "in practice" |
+de jure | | "in law", "on paper" |
+ad hoc | ad[- ]hoc | "one-off", "as needed" |
+a priori | a[- ]priori | "known in advance" |
+bona fide | bona[- ]fide | "genuine", "real" |
+status quo | | "how it is now" |
+vice versa | vice[- ]versa | "the other way round" |
+in situ | | "in place" |
+prima facie | | "at first sight" |
+ipso facto | | "by that fact" |
+quid pro quo | | "something in return" |
+modus operandi | | "way of working" |
+inter alia | | "among other things" |
+circa | | "about", "around" |
+
+## Abbreviations | abbreviation
+e.g. | e\.g\. | "for example" |
+i.e. | i\.e\. | "that is" |
+etc. | etc\. | "and so on", or list the rest |
+et al. | et al\.? | "and others" |
+viz. | viz\. | "namely" |
+cf. | cf\. | "compare" |

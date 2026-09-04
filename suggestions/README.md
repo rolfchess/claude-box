@@ -5,6 +5,63 @@ with `../install-defaults.sh` — see
 [the main README](../README.md#shared-defaults-rules-and-hooks) for what that
 does and how a box picks them up.
 
+## The word list
+
+The words to avoid are in `scripts/writing-style/words.txt`, and nowhere else.
+One entry per line, four fields separated by `" | "`:
+
+```
+commence, commences | commenc(?:e|es|ed|ing) | "start", "begin" | Use plain English.
+verbose | | "long", "wordy" |
+```
+
+The words as a reader sees them, a regex covering every form (empty means the
+first word is the regex), the replacement, and an optional note. A line starting
+with `## ` starts a group, whose text becomes a sub-heading in the rules file.
+Those two entries are an example; neither word is on the real list.
+
+A group heading takes marks after the heading, in any order:
+
+| Mark | Default | What it does |
+| ---- | ------- | ------------ |
+| `word` | yes | The regex must match a whole word |
+| `abbreviation` | | For a word ending in a full stop, where a closing word boundary does not fit |
+| `teach` | yes | The group is written into `rules/writing-style.md` |
+| `hook-only` | | The group is left out of `rules/writing-style.md` |
+
+```
+## Abbreviations | abbreviation
+## Latin | hook-only
+```
+
+Every group is blocked, marked either way. `hook-only` decides only whether the
+model is told in advance. 48 of the 84 entries are taught and 36 are left to the
+hook — Latin, idioms and jargon nouns, which a model hardly ever writes. Writing
+those into the rules would cost 359 tokens in every session and every box to
+prevent something that almost never happens, and the hook still catches it with
+a named replacement when it does.
+
+Every hook builds its regexes from that file, and every message names the
+replacement:
+
+```
+Writing-style check failed. Forbidden word(s) in the content, with the replacement to use:
+  "commences" -> "start", "begin"
+  "verbose" -> "long", "wordy"
+Reword and write the file again.
+```
+
+Naming the replacement is what keeps a block from turning into three. A message
+that only points at the rules file leaves Claude to guess, and a guess is another
+round trip.
+
+`render-words.py` writes the same list into the "Words to avoid" section of
+`rules/writing-style.md`, between two markers, and `install-defaults.sh` runs it
+after it copies the rules. So the list Claude reads and the list the hook applies
+are one list. `render-words.py --check` reports a line the hook cannot read, and
+the installer stops when it does — a `words.txt` with a broken regex would
+otherwise stop blocking without a word of warning.
+
 ## The word-list checks
 
 `check-forbidden-words.py` reads the text a tool call would put in the file, so a
@@ -33,8 +90,8 @@ Three things it does not check:
 
 A review comment is prose, and the rules apply to it. Neither word-list hook saw
 one, because a note goes out through `glab` or `post-draft.py` and never reaches
-a file. `check-review-notes.py` takes the note text out of the command and
-matches it against the same word list, in three shapes:
+a file. `review-notes.py` takes the note text out of the command and matches it
+against the same word list, in three shapes:
 
 | Command | Where the text is |
 | ------- | ----------------- |
@@ -48,13 +105,26 @@ hook cannot see a body read from a file or held in a shell variable. Blocks are
 counted per merge request: after three, the message tells Claude to stop
 rewriting and ask you.
 
+## One process per Bash call
+
+`bash/check-bash-command.py` is the only hook registered on `Bash`. It reads the
+command once, splits the heredoc bodies off it once, and calls
+`git/commit-message.py` and `writing-style/review-notes.py` with the result. The
+first one with something to say ends it: the hook exits 2 with its message.
+
+Both checks used to be hooks in their own right. Each of them returns at once
+when its regex does not match the command, so the work was never the cost — a
+cold `python3` is about 110 ms, and every `Bash` call started one twice. One
+process saves about 150 ms per call. A check whose file is missing is skipped, so a
+partial install still runs the other one.
+
 ## No credit to Claude in a commit
 
 A commit belongs to you. Claude's own instructions ask it to add a
 `Co-Authored-By: Claude` trailer to every commit message, and a "Generated with
 Claude Code" line to every pull request body, so it adds them back however often
 you say not to. `rules/git-commits.md` forbids both, and
-`check-commit-message.py` enforces it: a commit, a pull request or a merge
+`git/commit-message.py` enforces it: a commit, a pull request or a merge
 request whose message names Claude or Anthropic is blocked, and the message has
 to be sent again without the line.
 
@@ -89,15 +159,32 @@ and tool output the rules are ignored while they are still in the request.
 - **`PreCompact`** — asks the compactor to keep the rules in the summary, word
   for word.
 
-The rules file is 41 lines, so one print costs about 700 tokens. Injected context
-is added after the cached part of the request, so it does not cost a cache miss.
+The word list is left out of what is printed. A regex blocks every word in it
+before the write lands, and the block message names the replacement, so
+repeating the list mid-session adds nothing. What is printed is the part no regex
+can check, plus one line saying a hook holds the list. That is 544 tokens per
+print, against 745 for the whole file.
+
+The taught words stay in `rules/writing-style.md`, which is part of the
+instructions. They are what stops a banned word from being written in the first
+place. A rules-file token is sent once and read from cache after that, while an
+injected token is sent once per print and then stays in the context for every
+later request. So one token in the rules file costs much less than one token
+printed forty times, and the rules file is the right place for the list.
+
+The trade is a bigger instruction block against a smaller print. The rules file
+went from 687 to 1162 tokens, and each print dropped by 201, so the two designs
+cost the same at 2.4 user turns and the new one is cheaper past that: 24% less
+at 40 turns.
 
 ## The model-backed check
 
 A regex checks words. It cannot check short sentences, one idea per sentence,
 hedging, a dropped subject, or whether a comment describes the thing itself.
 `check-prose-style.py` sends the changed prose and the rules to a small model and
-reports what comes back. It is off until you add this to
+reports what comes back. It sends the rules without the word list, for the same
+reason: that list is enforced before the write lands, so sending it would only
+add a second report of the same word. It is off until you add this to
 `~/.claude/settings.json`:
 
 ```json
@@ -155,9 +242,14 @@ hook tells Claude to stop rewriting and ask you instead. Inside a box that file
 is on a read-only mount, so edit it on the host, or drop the `:ro` from the
 `scripts` mount in `claude-box`.
 
-Edit `FORBIDDEN` in `check-forbidden-words.py` to change the word list, and
-`rules/writing-style.md` to change the guidance. Keep the two in step: the rules
-file is what Claude reads, the script is what enforces it. The other scripts
-follow on their own — `scan-changed-files.py` imports the list, the allowlist and
-the skipped paths from `check-forbidden-words.py`, and `inject-rules.py` and
-`check-prose-style.py` read `rules/writing-style.md` at run time.
+To change the word list, edit `scripts/writing-style/words.txt` and run
+`../install-defaults.sh`. That is the only file to touch: the installer renders
+the taught groups into `rules/writing-style.md` for you, and every hook reads the
+same file. Mark a group `hook-only` to block its words without spending
+instruction space on them. Edit `rules/writing-style.md` outside the two markers to change the rest of
+the guidance.
+
+The scripts follow on their own. `scan-changed-files.py` and `review-notes.py`
+import the list, the allowlist and the skipped paths from
+`check-forbidden-words.py`, and `inject-rules.py` and `check-prose-style.py` read
+`rules/writing-style.md` at run time.

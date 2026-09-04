@@ -20,7 +20,11 @@ Both hooks exit 2 with the message on stderr, which shows it to Claude. The writ
 has already happened by then, so the file is fixed afterwards rather than blocked.
 
 The word list, the allowlist and the skipped paths all come from
-check-forbidden-words.py, so the two hooks stay in step.
+check-forbidden-words.py, so the two hooks stay in step. The message names the
+replacement for each word, as that hook's message does.
+
+The repository root is looked up once per working directory per session and kept
+in a state file, because `git rev-parse` costs as much as the diff itself.
 """
 
 import hashlib
@@ -81,9 +85,43 @@ def git(root, *args):
     return result.stdout.decode("utf-8", errors="replace")
 
 
-def repo_root(cwd):
+def roots_path(session_id):
+    directory = os.path.join(tempfile.gettempdir(), "claude-writing-style")
+    name = hashlib.sha1((session_id or "none").encode("utf-8")).hexdigest()
+    return os.path.join(directory, "roots-" + name + ".json")
+
+
+def repo_root(cwd, session_id=None):
+    """The root of the repository holding cwd, or None.
+
+    A root that has been found once in this session is read from a state file
+    instead of asking git again. A directory outside a repository is not
+    remembered, so `git init` still takes effect within the session.
+    """
+    path = roots_path(session_id)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            known = json.load(handle)
+        root = known.get(cwd)
+        if isinstance(root, str) and os.path.isdir(root):
+            return root
+    except (OSError, ValueError, TypeError, AttributeError):
+        known = {}
+
     output = git(cwd, "rev-parse", "--show-toplevel")
-    return output.strip() if output else None
+    root = output.strip() if output else None
+    if not root:
+        return None
+    if not isinstance(known, dict):
+        known = {}
+    known[cwd] = root
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(known, handle)
+    except OSError:
+        pass
+    return root
 
 
 def skipped(path, skip_markers):
@@ -191,8 +229,8 @@ def scan(root, checker):
         if counts[path] > MAX_ADDED_LINES:
             oversized.add(path)
             continue
-        for word in checker.find_forbidden(text, phrases):
-            found.append((path, number, word, text.strip()))
+        for word, replacement in checker.find_forbidden(text, phrases):
+            found.append((path, number, word, replacement, text.strip()))
     return found, sorted(oversized)
 
 
@@ -211,7 +249,8 @@ def main() -> int:
     if mode == "stop" and data.get("stop_hook_active"):
         return 0
 
-    root = repo_root(data.get("cwd") or os.getcwd())
+    session_id = data.get("session_id")
+    root = repo_root(data.get("cwd") or os.getcwd(), session_id)
     if not root:
         return 0
 
@@ -223,10 +262,9 @@ def main() -> int:
     if not found:
         return 0
 
-    session_id = data.get("session_id")
     reported = load_reported(session_id)
     fresh = []
-    for path, number, word, text in found:
+    for path, number, word, replacement, text in found:
         key = "|".join([
             path,
             word.lower(),
@@ -234,7 +272,7 @@ def main() -> int:
         ])
         if key not in reported:
             reported.add(key)
-            fresh.append((path, number, word, text))
+            fresh.append((path, number, word, replacement, text))
     if not fresh:
         return 0
     save_reported(session_id, reported)
@@ -249,8 +287,9 @@ def main() -> int:
             "the changed lines."
         )
     lines = [header, ""]
-    for path, number, word, text in fresh[:MAX_REPORTED]:
-        lines.append(f'  {path}:{number}  "{word}"  {text[:100]}')
+    for path, number, word, replacement, text in fresh[:MAX_REPORTED]:
+        lines.append(f'  {path}:{number}  "{word}" -> {replacement}')
+        lines.append(f"      {text[:100]}")
     if len(fresh) > MAX_REPORTED:
         lines.append(f"  ... and {len(fresh) - MAX_REPORTED} more")
     if oversized:
@@ -261,9 +300,8 @@ def main() -> int:
         )
     lines.append("")
     lines.append(
-        "See ~/.claude/rules/writing-style.md for the plain-word replacement. "
-        "Fix each line above. If a word is genuinely correct, tell the user and ask "
-        "whether to add the phrase to "
+        "Fix each line above. If a word is genuinely correct, tell the user and "
+        "ask whether to add the phrase to "
         "~/.claude/scripts/writing-style/allowlist.txt."
     )
     print("\n".join(lines), file=sys.stderr)

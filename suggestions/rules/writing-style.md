@@ -21,19 +21,84 @@ How to write, in chat and in docs (READMEs, comments, commit messages, plans, MR
 - A caller's reasoning belongs in a comment at the call site, not on the shared function it calls.
 - Do not add comments for self-explanatory code (see also CLAUDE.md, Code Style).
 
+<!-- The section below is written by scripts/writing-style/render-words.py from
+     scripts/writing-style/words.txt. Edit words.txt, not this section, and run
+     install-defaults.sh. -->
+<!-- words-to-avoid:start -->
 ## Words to avoid, and what to use instead
 
-- "appetite" (for effort or work) -> "time", "worth it", "want to do X". Appetite is for food, not code.
-- "minting" -> "creating", "making".
-- "exercising" (code paths, options) -> "running", "using".
-- "keyed on" / "key on" -> "based on", "uses X to decide", "checks X".
-- "carry" / "carries" (a value, provider, flag on a row or object) -> "has", "stores", "holds". A column stores a value; it does not carry it.
-- "pin" / "pinned" (a value onto a row or object) -> "set", "store", "fix". Write "set the provider on the order", not "pin the provider onto the order".
-- "surface" / "surfaces" (a value on a feed, response or object) -> "appears", "shows", "is reported". A paid invoice "appears on" the feed; it does not "surface on" it.
-- "fold" / "folding" (one thing into another) -> "put", "move", "add", "merge". Write "add the note to the README", not "fold the note into the README".
-- "scaffolding" / "scaffold" -> "structure", "set up", "starter code". Name the concrete thing.
-- "escape hatch" (a way to override or opt out) -> "a way to override it", "an exception". No euphemisms.
-- Any fancy or figurative verb where a plain one exists. A column, order, row or object does not "carry", "pin", "hold onto", "own" or "travel with" a value — it "has" or "stores" one.
+Use the plain word on the right. A hook blocks a write that uses one of these and names the replacement, so a blocked write tells you what to write instead.
+
+- Any fancy or figurative verb where a plain one exists. A column, order, row or object does not "carry", "pin", "hold onto", "own" or "travel with" a value -- it "has" or "stores" one.
+
+### A verb used of a thing that cannot do it
+
+- "carry", "carries" -> "has", "stores", "holds". A column stores a value; it does not carry it.
+- "pinned", "pinning" -> "set", "stored", "fixed". Write "set the provider on the order", not "pin the provider onto the order".
+- "surfaces", "surfacing" -> "appears", "shows", "is reported". A paid invoice appears on the feed; it does not surface on it.
+- "holds onto" -> "keeps", "stores".
+- "travels with" -> "goes with", "is stored on".
+- "hinge", "hinges" -> "depends on".
+- "fold", "folding" -> "put", "move", "add", "merge". Write "add the note to the README", not "fold the note into the README".
+- "seed", "seeding" -> "fill", "create the first", "set up".
+
+### A fancy verb where a plain one works
+
+- "mint", "minting" -> "create", "make".
+- "exercising" -> "running", "using".
+- "key on", "keyed on" -> "based on", "uses X to decide", "checks X".
+- "gate", "gated", "gating" -> "check", "condition", "switch".
+- "guard", "guards", "guarding" -> "check", "checks", "checking".
+- "scaffold", "scaffolding" -> "structure", "set up", "starter code". Name the concrete thing.
+- "leverage" -> "use".
+- "utilise", "utilize" -> "use".
+- "facilitate" -> "help", "let", "make X possible".
+- "streamline" -> "shorten", "cut a step".
+- "delve" -> "look at", "read".
+- "empower" -> "let", "allow".
+- "underpin" -> "support", "is the basis of".
+- "bolster" -> "strengthen", "add to".
+- "elevate" -> "raise", "improve".
+- "spearhead" -> "lead", "run".
+- "foster" -> "encourage", "help".
+- "boast" -> "has".
+
+### A vague or marketing adjective
+
+- "robust" -> "solid", "reliable", or name the property.
+- "powerful" -> Name what it does instead.
+- "seamless", "seamlessly" -> "with no step in between", or cut it.
+- "intuitive" -> "easy to learn", or name the property.
+- "delightful" -> Cut it.
+- "effortless", "effortlessly" -> "easy", or cut it.
+- "holistic" -> "whole", "complete".
+- "cutting-edge" -> "new", or cut it.
+- "state-of-the-art" -> "new", or cut it.
+- "best-in-class" -> Cut it.
+- "game-changer", "game-changing" -> Say what changes.
+
+### Filler
+
+- "basically" -> Cut it.
+- "essentially" -> Cut it.
+- "simply" -> Cut it.
+- "in order to" -> "to".
+
+### A word that goes stale
+
+- "today" -> "now", or write the date.
+
+### Abbreviations
+
+- "e.g." -> "for example".
+- "i.e." -> "that is".
+- "etc." -> "and so on", or list the rest.
+- "et al." -> "and others".
+- "viz." -> "namely".
+- "cf." -> "compare".
+
+The hook holds 36 more words that are not written out here, because they hardly ever come up. It names the replacement for those too.
+<!-- words-to-avoid:end -->
 
 ## Test
 

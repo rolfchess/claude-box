@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: block a merge request note that uses a forbidden word.
+"""Block a merge request note that uses a forbidden word.
+
+bash/check-bash-command.py calls check() for every Bash call, with the command
+already split into its skeleton and its heredoc bodies.
 
 A review comment is prose, and the writing rules apply to it. Nothing checked it
 before: check-forbidden-words.py reads the input of a Write or an Edit, and
 scan-changed-files.py reads `git diff`. A note goes out through `glab` or
 post-draft.py and never reaches a file, so both hooks miss it.
 
-This hook reads the Bash command the call would run, takes the note text out of
-it, and matches that text against the same word list. A hit exits with code 2,
-which stops the call and shows the message to Claude, so the note is reworded
-before it reaches GitLab.
+The check reads the Bash command the call would run, takes the note text out of
+it, and matches that text against the same word list. The caller then stops the
+call and shows the message to Claude, so the note is reworded before it reaches
+GitLab. The message names the replacement for each word.
+
+Which command posts a note is decided on the skeleton, so a heredoc that writes
+*about* posting one is left alone.
 
 Commands it checks:
 
@@ -26,7 +32,6 @@ from check-forbidden-words.py, so this hook and the file hooks stay in step.
 """
 
 import importlib.util
-import json
 import os
 import re
 import sys
@@ -43,9 +48,6 @@ POSTS_NOTE = re.compile(
     r"|glab\s+mr\s+(?:note|comment))",
     re.IGNORECASE,
 )
-
-# A heredoc opener: << or <<-, an optional quote, then the terminator word.
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 # The value of -m or --message, in single quotes, double quotes or bare.
 MESSAGE = re.compile(
@@ -69,32 +71,10 @@ def load_checker():
     return module
 
 
-def heredoc_bodies(command):
-    """The body of every heredoc in the command."""
-    bodies = []
-    lines = command.splitlines()
-    index = 0
-    while index < len(lines):
-        match = HEREDOC.search(lines[index])
-        if not match:
-            index += 1
-            continue
-        terminator = match.group(2)
-        body = []
-        index += 1
-        while index < len(lines) and lines[index].strip() != terminator:
-            body.append(lines[index])
-            index += 1
-        index += 1  # step over the terminator
-        if body:
-            bodies.append("\n".join(body))
-    return bodies
-
-
-def note_text(command):
+def note_text(skeleton, bodies):
     """The prose the command would post, or an empty string."""
-    parts = heredoc_bodies(command)
-    for match in MESSAGE.finditer(command):
+    parts = [bodies] if bodies.strip() else []
+    for match in MESSAGE.finditer(skeleton):
         value = match.group(1) or match.group(2) or match.group(3) or ""
         if value:
             parts.append(value)
@@ -111,32 +91,31 @@ def note_key(command):
     return "review-note:unknown"
 
 
-def main() -> int:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0  # never block on a hook failure
+def check(skeleton, bodies):
+    """The message to show Claude, or None when the note may be posted.
 
-    command = (data.get("tool_input") or {}).get("command")
-    if not isinstance(command, str) or not POSTS_NOTE.search(command):
-        return 0
+    `skeleton` is the command without its heredoc bodies, `bodies` is those
+    bodies on their own.
+    """
+    if not POSTS_NOTE.search(skeleton):
+        return None
 
-    text = note_text(command)
+    text = note_text(skeleton, bodies)
     if not text.strip():
-        return 0
+        return None
 
     checker = load_checker()
     found = checker.find_forbidden(text, checker.load_allowlist())
-    key = note_key(command)
+    key = note_key(skeleton)
     if not found:
         checker.clear_block(key)
-        return 0
+        return None
 
     count = checker.record_block(key)
-    words = ", ".join(f'"{word}"' for word in found)
     message = (
-        f"Writing-style check failed. This merge request note uses {words}.\n"
-        "See ~/.claude/rules/writing-style.md for the plain-word replacement. "
+        "Writing-style check failed. This merge request note uses a forbidden "
+        "word. Use the replacement:\n"
+        f"{checker.describe(found)}\n"
         "Reword the note and post it again."
     )
     if count >= checker.LOOP_THRESHOLD:
@@ -147,12 +126,4 @@ def main() -> int:
             "add an allowing phrase to "
             "~/.claude/scripts/writing-style/allowlist.txt, or post it as it is."
         )
-    print(message, file=sys.stderr)
-    return 2
-
-
-if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except Exception:  # a hook failure must not block the call
-        sys.exit(0)
+    return message
