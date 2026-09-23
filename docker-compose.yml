@@ -22,8 +22,10 @@ services:
       - "${CLAUDE_BOX_PROJECT_DIR:?run via the claude-box script}:${CLAUDE_BOX_WORKDIR:-/workspace}"
       # Per-project Claude home -> isolated memory/config/credentials
       - "${CLAUDE_BOX_CONFIG_DIR:?run via the claude-box script}:/home/claude/.claude"
-      # Per-project glab config (GitLab auth lives here)
-      - "${CLAUDE_BOX_GLAB_DIR:?run via the claude-box script}:/home/claude/.config/glab"
+      # glab config (the GitLab login). glab reads ~/.config/glab-cli; the
+      # claude-box script points this at the host's directory, or at a
+      # per-project one with --no-share-glab.
+      - "${CLAUDE_BOX_GLAB_DIR:?run via the claude-box script}:/home/claude/.config/glab-cli"
       # Host git identity (name/email), read-only
       - "${CLAUDE_BOX_GITCONFIG:?run via the claude-box script}:/home/claude/.gitconfig:ro"
       # Maven cache, shared across all projects to avoid re-downloading the world

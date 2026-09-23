@@ -73,8 +73,8 @@ up — see [Testcontainers](#testcontainers). Claude starts in that directory.
 - **Claude login:** Claude prints an OAuth URL. Open it in your browser,
   approve, paste the code back. The login is shared across all boxes, so you do
   this once — see [Shared login](#shared-login).
-- **GitLab:** run `glab auth login`. Stored per project under
-  `~/.claude-box/projects/<key>/glab`.
+- **GitLab:** nothing to do. The box uses your host login — see
+  [GitLab login](#gitlab-login).
 - Your host `~/.gitconfig` is mounted read-only, so commits get the right author.
 
 ### Names, `--list` and shutdown
@@ -112,7 +112,7 @@ State lives on the host under `~/.claude-box/`:
   projects/
     my-app-1a2b3c4d/
       claude/   <- Claude's home (settings, transcripts, credentials)
-      glab/     <- GitLab CLI config
+      glab/     <- GitLab CLI config, only with --no-share-glab
   memory/
     my-app-3bb5210e/  <- memory, one store per repository
 ```
@@ -142,6 +142,34 @@ repository the store is per directory.
 
 A store left from before memory moved out of the per-directory Claude home is
 moved into the shared one on the first run, if the shared one is still empty.
+
+## GitLab login
+
+`glab` reads `~/.config/glab-cli`. The box mounts that host directory at the same
+path, so `glab` in the box is logged in as you and needs no setup.
+
+The token itself is often not in that directory. `glab auth login` puts it in the
+operating system keyring whenever there is one, which is the default on macOS,
+and the container has no keyring. So when the config file has no token, the
+script asks the host's own `glab` for it and passes it in as `GITLAB_TOKEN`:
+
+```bash
+glab auth status --show-token
+```
+
+That runs in the project directory, so a project on a self-managed instance gets
+that instance's token and not the one for whatever host is the default. Set
+`GITLAB_TOKEN` yourself and that value is used instead, with no keyring lookup.
+`GITLAB_HOST` is passed through when you set it.
+
+The token is passed with `docker run -e`, so it is in the host's process list
+while the `docker` command runs, and in `docker inspect` for the life of the
+container. Both are on your own machine, where the token is readable anyway.
+
+| Flag / variable | Effect |
+| --------------- | ------ |
+| `--no-share-glab` | Use a login of its own, under `~/.claude-box/projects/<key>/glab`. Run `glab auth login` in the box once (`CLAUDE_BOX_SHARE_GLAB=0`). |
+| `GITLAB_TOKEN=...` | Use this token, whatever the host config says. |
 
 ## Host config sharing
 

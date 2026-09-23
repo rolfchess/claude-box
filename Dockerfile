@@ -61,7 +61,7 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 RUN useradd --create-home --shell /bin/bash "${USERNAME}" \
     && mkdir -p /home/${USERNAME}/.claude \
-                /home/${USERNAME}/.config/glab \
+                /home/${USERNAME}/.config/glab-cli \
                 /home/${USERNAME}/.m2 \
                 /workspace \
     && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /workspace

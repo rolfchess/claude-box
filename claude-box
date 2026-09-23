@@ -26,6 +26,13 @@
 # credentials file, so you log in once for every worktree/project. Pass
 # --no-shared-auth to keep credentials per-directory instead.
 #
+# Your GitLab login is shared too: the box mounts the host's ~/.config/glab-cli,
+# so `glab` in the box is logged in as you. `glab auth login` stores the token in
+# the operating system keyring when there is one, which is the default on macOS,
+# and the container has no keyring -- so the token is read once from the host's
+# own glab and passed in as GITLAB_TOKEN. Pass --no-share-glab for a login that
+# is per-directory and stays in the box.
+#
 # Even though the box runs with --dangerously-skip-permissions, a deny rule +
 # PreToolUse hook (both enforced in bypass mode) block two things by default:
 #   - certain commands: "git commit", "git push"  (CLAUDE_BOX_BLOCK)
@@ -62,6 +69,7 @@
 #   --no-shared-memory
 #                     Don't share memory across a repository's worktrees; keep
 #                     it per-directory.
+#   --no-share-glab   Don't share the host GitLab login; keep it per-directory.
 #   --no-share-settings
 #                     Don't merge host settings.json / overlay CLAUDE.md.
 #   --no-notify       Don't speak notifications (same as CLAUDE_BOX_NOTIFY="").
@@ -83,6 +91,7 @@ SHARE_CONFIG=1
 SHARE_SETTINGS="${CLAUDE_BOX_SHARE_SETTINGS-1}"   # merge host settings.json (hooks, deny rules)
 SHARED_AUTH="${CLAUDE_BOX_SHARED_AUTH-1}"   # share one login across all boxes
 SHARED_MEMORY="${CLAUDE_BOX_SHARED_MEMORY-1}"   # one memory store per repository
+SHARE_GLAB="${CLAUDE_BOX_SHARE_GLAB-1}"   # use the host's GitLab login
 NO_NOTIFY=0
 LIST=0
 NAME=""
@@ -97,6 +106,7 @@ while [ $# -gt 0 ]; do
         --no-share)       SHARE_CONFIG=0; SHARE_SETTINGS=0 ;;
         --no-shared-auth) SHARED_AUTH=0 ;;
         --no-shared-memory) SHARED_MEMORY=0 ;;
+        --no-share-glab)  SHARE_GLAB=0 ;;
         --share-settings) SHARE_SETTINGS=1 ;;   # kept: now the default
         --no-share-settings) SHARE_SETTINGS=0 ;;
         --no-notify)      NO_NOTIFY=1 ;;
@@ -149,9 +159,50 @@ else
     WORKDIR="/workspace"
 fi
 
+# ---------------------------------------------------------------------------
+# GitLab login. glab reads ~/.config/glab-cli, so mounting that host directory is
+# enough to be logged in as yourself -- but only when the token is in the file.
+# `glab auth login` puts it in the operating system keyring instead whenever one
+# is available, which is the default on macOS. The container has no keyring, so
+# in that case ask the host's own glab for the token and pass it in.
+#
+# The token is read in $DIR, so a project on a self-managed instance gets that
+# instance's token rather than the one for whatever host happens to be the
+# default. Passing it as -e puts it in the host's process list for as long as the
+# `docker` command runs; --no-share-glab (CLAUDE_BOX_SHARE_GLAB=0) turns the whole
+# thing off and gives the box its own login under ~/.claude-box instead.
+# ---------------------------------------------------------------------------
+HOST_GLAB_DIR="$HOME/.config/glab-cli"
+GLAB_NOTE="per-directory login"
+RUN_ENV=()
+if [ "$SHARE_GLAB" = "1" ] && [ -d "$HOST_GLAB_DIR" ]; then
+    GLAB_DIR="$HOST_GLAB_DIR"
+    GLAB_NOTE="host login ($HOST_GLAB_DIR)"
+    if [ -n "${GITLAB_TOKEN:-}" ]; then
+        RUN_ENV+=(-e "GITLAB_TOKEN=$GITLAB_TOKEN")
+        GLAB_NOTE="$GLAB_NOTE + token from GITLAB_TOKEN"
+    elif ! grep -Eq '^[[:space:]]+token:[[:space:]]*[^[:space:]]' "$HOST_GLAB_DIR/config.yml" 2>/dev/null \
+         && command -v glab >/dev/null 2>&1; then
+        GLAB_TOKEN="$( (cd "$DIR" && glab auth status --show-token 2>&1) \
+                       | sed $'s/\033\\[[0-9;]*m//g' \
+                       | awk -F'Token: ' '/Token: /{print $2; exit}' \
+                       | tr -d '[:space:]' || true )"
+        if [ -n "$GLAB_TOKEN" ]; then
+            RUN_ENV+=(-e "GITLAB_TOKEN=$GLAB_TOKEN")
+            GLAB_NOTE="$GLAB_NOTE + token from the host keyring"
+        else
+            GLAB_NOTE="$GLAB_NOTE, no token found -- run 'glab auth login' in the box"
+        fi
+        unset GLAB_TOKEN
+    fi
+    [ -n "${GITLAB_HOST:-}" ] && RUN_ENV+=(-e "GITLAB_HOST=$GITLAB_HOST")
+else
+    GLAB_DIR="$PROJECT_STATE/glab"
+fi
+
 export CLAUDE_BOX_PROJECT_DIR="$DIR"
 export CLAUDE_BOX_CONFIG_DIR="$PROJECT_STATE/claude"
-export CLAUDE_BOX_GLAB_DIR="$PROJECT_STATE/glab"
+export CLAUDE_BOX_GLAB_DIR="$GLAB_DIR"
 export CLAUDE_BOX_GITCONFIG="$GITCONFIG"
 export CLAUDE_BOX_WORKDIR="$WORKDIR"
 export TZ="${TZ:-$(readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##')}"
@@ -502,6 +553,7 @@ fi
 if [ "$SHARED_AUTH" = "1" ]; then
     echo ">> Auth:     shared login -> $SHARED_CREDS"
 fi
+echo ">> GitLab:   $GLAB_NOTE"
 if [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
     echo ">> Settings: host settings.json merged (project settings still win)"
 fi
@@ -567,5 +619,6 @@ echo ">> Starting container (Ctrl-D / 'exit' to leave)..."
 STATUS=0
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" run --rm --name "$CONTAINER_NAME" \
     "${BOX_LABELS[@]}" \
+    ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
     ${SHARE_MOUNTS[@]+"${SHARE_MOUNTS[@]}"} claude "${CMD[@]}" || STATUS=$?
 exit $STATUS
