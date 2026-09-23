@@ -148,7 +148,7 @@ compaction. What fades is attention: the further a rule is from the end of the
 context, the less it shapes the writing. After a hundred thousand tokens of code
 and tool output the rules are ignored while they are still in the request.
 
-`inject-rules.py` prints them again at the end of the context, on three events:
+`inject-rules.py` prints them again at the end of the context, on four events:
 
 - **`UserPromptSubmit`** — every message you send, so the rules land right after
   your prompt.
@@ -156,8 +156,33 @@ and tool output the rules are ignored while they are still in the request.
   the batch wrote a `.md` file. This is the only place to print them in a long
   run with no message from you. `CLAUDE_WRITING_STYLE_EVERY_N` changes the
   interval.
+- **`PreToolUse`** on `Write`, `Edit`, `MultiEdit` and `NotebookEdit` — see
+  below.
 - **`PreCompact`** — asks the compactor to keep the rules in the summary, word
   for word.
+
+### Before an edit
+
+Claude writes the text of an edit before any hook runs. A print that comes with
+the edit, or after it, reaches Claude too late for that edit. It helps only the
+next one. After a long stretch of reading code, the last print is far back, and
+the first edit falls back to old habits.
+
+So the `PreToolUse` mode refuses an edit when the rules were last printed five or
+more tool batches ago. The refusal contains the rules, and Claude makes the same
+edit again with the rules just read. The print resets the count, so the next
+edits pass. The cost is one rewritten edit after each long stretch without a
+print. `CLAUDE_WRITING_STYLE_WRITE_GAP` changes the five, and `0` turns the check
+off. An edit made with `sed` or a heredoc in `Bash` is not checked here.
+
+### Comments only after code
+
+The "Comments" section applies only to code. It is left out of the print until
+the session edits a file that is not documentation, and it is printed from then
+on. A session that only writes chat and documentation saves 554 characters per
+print, about a quarter. The section stays in `rules/writing-style.md`, so it is
+always part of the instructions, and `check-prose-style.py` still sends it to
+the judge.
 
 The word list is left out of what is printed. A regex blocks every word in it
 before the write lands, and the block message names the replacement, so

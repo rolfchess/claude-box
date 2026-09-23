@@ -13,13 +13,14 @@ How to write, in chat and in docs (READMEs, comments, commit messages, plans, MR
 - No metaphors when a plain word works.
 - No abbreviations. Write words in full: "for example" not "e.g.", "that is" not "i.e.", "Product Owner" not "PO".
 - Write complete sentences. Do not drop the subject or verb. "This is natural to do when X" not "Natural to do when X"; "It is reversible" not "Reversible".
+- Do not write "today" for the state of the code or the project. Write "now", or write the date: "as the code is now", not "as the code is today". The word is fine when it means the day itself.
 
-## Comments and KDoc
+## Comments
 
-- A comment or KDoc on a function or type says **what** it does — its purpose or contract — in its own terms. Not how it is implemented, and not why a caller uses it.
-- Keep the description inward: describe the thing itself, not how callers or other systems use it. A repository helper's KDoc defines the concept; it does not describe the Twikey flow that calls it.
+- A comment or docstring on a function or type says **what** it does — its purpose or contract — in its own terms. Not how it is implemented, and not why a caller uses it.
+- Keep the description inward: describe the thing itself, not how callers or other systems use it. The docstring of a function that loads a user says what it returns; it does not describe the sign-up flow that calls it.
 - A caller's reasoning belongs in a comment at the call site, not on the shared function it calls.
-- Do not add comments for self-explanatory code (see also CLAUDE.md, Code Style).
+- Do not add comments for self-explanatory code.
 
 <!-- The section below is written by scripts/writing-style/render-words.py from
      scripts/writing-style/words.txt. Edit words.txt, not this section, and run
@@ -83,10 +84,6 @@ Use the plain word on the right. A hook blocks a write that uses one of these an
 - "essentially" -> Cut it.
 - "simply" -> Cut it.
 - "in order to" -> "to".
-
-### A word that goes stale
-
-- "today" -> "now", or write the date.
 
 ### Abbreviations
 

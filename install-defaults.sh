@@ -25,6 +25,7 @@
 # Claude, and a merge request note that uses a banned word. The last two keep
 # the writing rules where the model reads them: one prints the rules again on
 # every user turn, every fifteenth tool batch and in the compact instructions,
+# and refuses a file edit, with the rules, when the last print is too old,
 # and one sends the changed documentation and the changed comments in code to a
 # small model to check what a regex cannot. That last one is off until you put
 # "env": { "CLAUDE_WRITING_STYLE_LLM": "1" } in your settings.json. A shell

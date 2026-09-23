@@ -305,7 +305,12 @@ BOX_LABELS=(
 )
 
 if [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ]; then
-    SETTINGS="$(cat "$HOME/.claude/settings.json")"
+    command -v jq >/dev/null 2>&1 || { echo "claude-box: jq is required to merge settings.json (or pass --no-share-settings)" >&2; exit 1; }
+    # blockReadsOutsideWorkingDirectories keeps Claude inside the project on the
+    # host. In the box it only stops Claude from using the container's own files.
+    SETTINGS="$(jq 'del(.blockReadsOutsideWorkingDirectories,
+                        .permissions.blockReadsOutsideWorkingDirectories)' \
+                   "$HOME/.claude/settings.json")"
 else
     SETTINGS='{}'
 fi

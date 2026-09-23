@@ -114,9 +114,6 @@ spin up | (?:spin|spins|spinning|spun) up | "start", "create" |
 wire up | (?:wire|wires|wired|wiring) up | "connect", "register", "set up" |
 kick off | (?:kick|kicks|kicked|kicking) off | "start" |
 
-## A word that goes stale
-today | today(?:s)? | "now", or write the date |
-
 ## Latin | hook-only
 caveat, caveats | caveat(?:s)? | "a limit", "a warning", "one thing to note" |
 vis-à-vis, vis-a-vis | vis-[àa]-vis | "about", "compared with" |

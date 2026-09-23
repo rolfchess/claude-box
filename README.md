@@ -140,6 +140,12 @@ all run, and permissions are a union where `deny` beats `allow`. So a hook or
 guardrails are merged last so they always win. `--no-share-settings` skips the
 merge and the `CLAUDE.md` overlay.
 
+One host setting is left out: `blockReadsOutsideWorkingDirectories`, at the top
+level or under `permissions`. On the host it keeps Claude inside the project. In
+the box, Claude can only reach the project and the mounts, so the setting would
+only stop it from using the container's own files. A project's own
+`.claude/settings.json` can still set it.
+
 ### Shared login
 
 The state key comes from the directory path, so every worktree of a repository is
@@ -253,7 +259,7 @@ clean slate.
 | `bash/check-bash-command.py` | before every `Bash` call | The command. It runs the two checks below in one process |
 | `git/commit-message.py` | called by the above | The message in a commit, a pull request or a merge request. A line that credits Claude blocks the call |
 | `writing-style/review-notes.py` | called by the above | The note text inside a `glab` or `post-draft.py` command, before it reaches GitLab |
-| `writing-style/inject-rules.py` | on your message, after a tool batch, before compaction | Nothing. It prints the rules again at the end of the context, without the word list a hook already enforces |
+| `writing-style/inject-rules.py` | on your message, after a tool batch, before a file edit, before compaction | Nothing. It prints the rules again at the end of the context, without the word list a hook already enforces. It refuses an edit when the last print is five or more batches old. The refusal contains the rules, and Claude makes the edit again |
 | `writing-style/check-prose-style.py` | when the turn ends | The changed documentation lines and code comments, judged by a small model. Off by default |
 
 `settings.json` registers the hooks, denies reads of `.env` and secrets, and asks
