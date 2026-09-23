@@ -2,7 +2,8 @@
 
 Run Claude Code inside a Docker container with permission prompts turned off
 (`--dangerously-skip-permissions`), where it can only reach one mounted
-directory. Each mounted directory gets its **own memory**.
+directory. Each mounted directory gets its own state, and each repository gets
+its own memory, shared by all of its worktrees.
 
 Inside the image: `git`, `glab`, Maven 3.9 + JDK 21, Node.js 22 + Claude Code,
 and the Docker CLI (it talks to the host daemon, so Testcontainers works).
@@ -102,20 +103,45 @@ mounted directory, so git in the box cannot find its repository. `claude-box`
 bind-mounts that one parent `.git` directory at its real host path. Nothing else
 from the parent repository is mounted, and the guardrails below still apply.
 
-## Per-directory memory
+## State and memory
 
-State lives on the host under `~/.claude-box/projects/<basename>-<hash>/`:
+State lives on the host under `~/.claude-box/`:
 
 ```
-~/.claude-box/projects/
-  my-app-1a2b3c4d/
-    claude/   <- Claude's home (memory, settings, credentials)
-    glab/     <- GitLab CLI config
+~/.claude-box/
+  projects/
+    my-app-1a2b3c4d/
+      claude/   <- Claude's home (settings, transcripts, credentials)
+      glab/     <- GitLab CLI config
+  memory/
+    my-app-3bb5210e/  <- memory, one store per repository
 ```
 
 The `<hash>` comes from the full path, so two directories with the same name do
-not collide, and re-mounting a directory always reuses its memory. The Maven
+not collide, and re-mounting a directory always reuses its state. The Maven
 cache (`~/.m2`) is one Docker volume shared by all projects.
+
+Memory is the one thing that is not per directory. Claude keeps it in
+`~/.claude/projects/<working directory>/memory`, so the store follows the path
+the project is mounted at: every worktree, and `--workspace`, would start with an
+empty one. `claude-box` binds one directory per repository onto that path
+instead, so every worktree of a project reads and writes the same memory. What
+Claude learns about the project is there on the next branch.
+
+That is the right scope for what memory holds. Your preferences, the project's
+goals and its constraints belong to the project, not to the branch you are on.
+
+The repository is found with `git rev-parse --git-common-dir`, which gives the
+same answer from the main checkout and from every worktree. Outside a git
+repository the store is per directory.
+
+| Variable / flag | Effect |
+| --------------- | ------ |
+| `CLAUDE_BOX_MEMORY=<dir>` | Use this directory as the store. |
+| `--no-shared-memory` | Keep memory per directory (`CLAUDE_BOX_SHARED_MEMORY=0`). |
+
+A store left from before memory moved out of the per-directory Claude home is
+moved into the shared one on the first run, if the shared one is still empty.
 
 ## Host config sharing
 
@@ -128,7 +154,8 @@ would undo the per-directory isolation. Instead the static parts are overlaid
 | ----------------------------- | ---------- |
 | `skills/`, `commands/`, `agents/`, `rules/`, `scripts/`, `output-styles/`, `CLAUDE.md` | everything else |
 
-Memory, `projects/`, `todos/` and the rest stay **writable and per-project**.
+`projects/`, `todos/` and the rest stay **writable and per-project**; memory is
+writable and per-repository (see above).
 Use `--no-share` for a completely clean slate.
 
 Your `settings.json` is not mounted. It is merged into the generated box

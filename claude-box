@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # claude-box — start an isolated Docker container with Claude Code running
-# inside it, with per-directory memory.
+# inside it, with per-directory state and per-repository memory.
 #
 #   claude-box [options] [DIR]
 #
@@ -17,10 +17,14 @@
 # into the box's user-level settings (so hooks and deny rules you set once on the
 # host apply in every box). A project's own .claude/settings.json still wins over
 # it, and the box guardrails below are applied last. Pass --no-share-settings for
-# the old behaviour. Memory stays writable and per-project, but
-# your Claude login is shared across all boxes via a single credentials file, so
-# you log in once for every worktree/project. Pass --no-shared-auth to keep
-# credentials per-directory instead.
+# the old behaviour.
+#
+# Memory is writable and shared per repository: every worktree of a project, and
+# every mount path, reads and writes one store, so what Claude learns about the
+# project is there on the next branch too. Pass --no-shared-memory to keep it per
+# directory. Your Claude login is shared across all boxes via a single
+# credentials file, so you log in once for every worktree/project. Pass
+# --no-shared-auth to keep credentials per-directory instead.
 #
 # Even though the box runs with --dangerously-skip-permissions, a deny rule +
 # PreToolUse hook (both enforced in bypass mode) block two things by default:
@@ -55,6 +59,9 @@
 #   --workspace       Mount the project at /workspace instead of its host path.
 #   --no-share        Don't overlay any host ~/.claude config (clean slate).
 #   --no-shared-auth  Don't share the login; keep credentials per-directory.
+#   --no-shared-memory
+#                     Don't share memory across a repository's worktrees; keep
+#                     it per-directory.
 #   --no-share-settings
 #                     Don't merge host settings.json / overlay CLAUDE.md.
 #   --no-notify       Don't speak notifications (same as CLAUDE_BOX_NOTIFY="").
@@ -75,6 +82,7 @@ REBUILD=0
 SHARE_CONFIG=1
 SHARE_SETTINGS="${CLAUDE_BOX_SHARE_SETTINGS-1}"   # merge host settings.json (hooks, deny rules)
 SHARED_AUTH="${CLAUDE_BOX_SHARED_AUTH-1}"   # share one login across all boxes
+SHARED_MEMORY="${CLAUDE_BOX_SHARED_MEMORY-1}"   # one memory store per repository
 NO_NOTIFY=0
 LIST=0
 NAME=""
@@ -88,6 +96,7 @@ while [ $# -gt 0 ]; do
         --workspace)      MIRROR_PATH=0 ;;
         --no-share)       SHARE_CONFIG=0; SHARE_SETTINGS=0 ;;
         --no-shared-auth) SHARED_AUTH=0 ;;
+        --no-shared-memory) SHARED_MEMORY=0 ;;
         --share-settings) SHARE_SETTINGS=1 ;;   # kept: now the default
         --no-share-settings) SHARE_SETTINGS=0 ;;
         --no-notify)      NO_NOTIFY=1 ;;
@@ -149,8 +158,28 @@ export TZ="${TZ:-$(readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##')
 
 # Overlay selected host ~/.claude items read-only so skills/commands/rules/etc.
 # are available inside the box without exposing (or letting the box mutate) the
-# rest of your real config. Credentials + memory stay writable & per-project.
+# rest of your real config. Credentials stay writable and shared; memory is
+# writable and shared per repository (see the memory block below).
 SHARE_MOUNTS=()
+
+# Which repository is this? The common git dir is <mainrepo>/.git for a normal
+# checkout and for every worktree of it, so REPO_ROOT is the same value from any
+# worktree. Both the worktree mount and the shared memory store below use it.
+COMMON_GIT_DIR=""
+REPO_ROOT=""
+if command -v git >/dev/null 2>&1 \
+   && git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    COMMON_GIT_DIR="$(git -C "$DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -z "$COMMON_GIT_DIR" ]; then           # older git without --path-format
+        COMMON_GIT_DIR="$(git -C "$DIR" rev-parse --git-common-dir)"
+        case "$COMMON_GIT_DIR" in /*) ;; *) COMMON_GIT_DIR="$DIR/$COMMON_GIT_DIR" ;; esac
+    fi
+    COMMON_GIT_DIR="$(cd "$COMMON_GIT_DIR" && pwd)"
+    case "$(basename "$COMMON_GIT_DIR")" in
+        .git) REPO_ROOT="$(dirname "$COMMON_GIT_DIR")" ;;
+        *)    REPO_ROOT="$COMMON_GIT_DIR" ;;     # bare repo: it is its own root
+    esac
+fi
 
 # Git worktree support. In a worktree the project's `.git` is a *file* pointing
 # at <mainrepo>/.git/worktrees/<name>, whose commondir points back to
@@ -159,21 +188,61 @@ SHARE_MOUNTS=()
 # absolute pointers resolve), which already contains the worktrees/<name>
 # subdir. Nothing else from the parent repo is exposed; the .m2/commit
 # guardrails still apply. Set CLAUDE_BOX_NO_GIT_COMMONDIR=1 to skip this.
-if [ "${CLAUDE_BOX_NO_GIT_COMMONDIR:-0}" != "1" ] \
-   && command -v git >/dev/null 2>&1 \
-   && git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    COMMON_GIT_DIR="$(git -C "$DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-    if [ -z "$COMMON_GIT_DIR" ]; then           # older git without --path-format
-        COMMON_GIT_DIR="$(git -C "$DIR" rev-parse --git-common-dir)"
-        case "$COMMON_GIT_DIR" in /*) ;; *) COMMON_GIT_DIR="$DIR/$COMMON_GIT_DIR" ;; esac
-    fi
-    COMMON_GIT_DIR="$(cd "$COMMON_GIT_DIR" && pwd)"
+if [ "${CLAUDE_BOX_NO_GIT_COMMONDIR:-0}" != "1" ] && [ -n "$COMMON_GIT_DIR" ]; then
     case "$COMMON_GIT_DIR" in
         "$DIR"/*) ;;   # normal repo: .git is inside the mounted dir, nothing to do
         *) SHARE_MOUNTS+=(-v "$COMMON_GIT_DIR:$COMMON_GIT_DIR")
            echo ">> Worktree: parent git dir -> $COMMON_GIT_DIR" ;;
     esac
 fi
+
+# ---------------------------------------------------------------------------
+# Memory. Claude stores it in ~/.claude/projects/<key>/memory, where <key> is the
+# working directory with every character that is not a letter or digit replaced
+# by "-". So the store depends on the path the project is mounted at: --workspace
+# and each worktree of a repository would each start with an empty one, and what
+# Claude learned on the last branch would be gone.
+#
+# Bind one directory per repository onto that path instead. Every worktree of a
+# project then reads and writes the same memory, whatever it is mounted at. Goals,
+# constraints and preferences belong to the project, not to the branch. Outside a
+# git repository the store stays per directory. Set CLAUDE_BOX_MEMORY to put it
+# somewhere else, or pass --no-shared-memory to keep it per directory.
+# ---------------------------------------------------------------------------
+MEM_SLUG="$(printf '%s' "$WORKDIR" | tr -c 'A-Za-z0-9' '-')"
+MEM_TARGET="/home/claude/.claude/projects/$MEM_SLUG/memory"
+if [ -n "${CLAUDE_BOX_MEMORY:-}" ]; then
+    MEM_DIR="$CLAUDE_BOX_MEMORY"
+    MEM_SCOPE="set by CLAUDE_BOX_MEMORY"
+elif [ "$SHARED_MEMORY" = "1" ] && [ -n "$REPO_ROOT" ]; then
+    REPO_SLUG="$(printf '%s' "$(basename "$REPO_ROOT")" | tr -c 'A-Za-z0-9_.-' '-')"
+    MEM_DIR="$CLAUDE_BOX_HOME/memory/${REPO_SLUG}-$(printf '%s' "$REPO_ROOT" | shasum | cut -c1-8)"
+    MEM_SCOPE="shared by every worktree of $REPO_ROOT"
+else
+    MEM_DIR="$PROJECT_STATE/memory"
+    MEM_SCOPE="this directory only"
+fi
+mkdir -p "$MEM_DIR"
+
+# The host side of the mount point: where Claude wrote memory before the store
+# moved out of the per-project Claude home. Files still there would be hidden by
+# the bind mount, so move them once, and never on top of a store that already has
+# files in it.
+MEM_MOUNTPOINT="$PROJECT_STATE/claude/projects/$MEM_SLUG/memory"
+if [ -d "$MEM_MOUNTPOINT" ] && [ -n "$(ls -A "$MEM_MOUNTPOINT" 2>/dev/null)" ]; then
+    if [ -z "$(ls -A "$MEM_DIR" 2>/dev/null)" ]; then
+        cp -a "$MEM_MOUNTPOINT/." "$MEM_DIR/" && rm -rf "${MEM_MOUNTPOINT:?}"
+        echo ">> Memory:   moved the old per-directory store into $MEM_DIR"
+    else
+        echo ">> Memory:   note: $MEM_MOUNTPOINT still holds files; the shared store is used instead" >&2
+    fi
+fi
+
+# Pre-create the mount point. This bind nests inside the per-project ~/.claude
+# mount, and on Docker Desktop runc refuses to create a nested mount point (see
+# the shared credentials below for the same problem).
+mkdir -p "$MEM_MOUNTPOINT"
+SHARE_MOUNTS+=(-v "$MEM_DIR:$MEM_TARGET")
 
 if [ "$SHARE_CONFIG" = "1" ]; then
     for item in skills commands agents rules scripts output-styles; do
@@ -425,7 +494,8 @@ fi
 echo ">> Project:  $DIR"
 echo ">> Mounted:  $WORKDIR"
 echo ">> Container: $CONTAINER_NAME"
-echo ">> Memory:   $PROJECT_STATE/claude"
+echo ">> Home:     $PROJECT_STATE/claude"
+echo ">> Memory:   $MEM_DIR ($(ls -1 "$MEM_DIR" 2>/dev/null | wc -l | tr -d ' ') files, $MEM_SCOPE)"
 if [ "${#SHARE_MOUNTS[@]}" -gt 0 ]; then
     echo ">> Shared:   $((${#SHARE_MOUNTS[@]} / 2)) host mount(s) (skills/commands/rules + app config)"
 fi
