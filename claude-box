@@ -26,8 +26,8 @@
 # credentials file, so you log in once for every worktree/project. Pass
 # --no-shared-auth to keep credentials per-directory instead.
 #
-# Your GitLab login is shared too: the box mounts the host's ~/.config/glab-cli,
-# so `glab` in the box is logged in as you. `glab auth login` stores the token in
+# Your GitLab login is shared too: the box mounts the host's glab config
+# directory, so `glab` in the box is logged in as you. `glab auth login` stores the token in
 # the operating system keyring when there is one, which is the default on macOS,
 # and the container has no keyring -- so the token is read once from the host's
 # own glab and passed in as GITLAB_TOKEN. Pass --no-share-glab for a login that
@@ -160,8 +160,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# GitLab login. glab reads ~/.config/glab-cli, so mounting that host directory is
-# enough to be logged in as yourself -- but only when the token is in the file.
+# GitLab login. glab reads $GLAB_CONFIG_DIR, else $XDG_CONFIG_HOME/glab-cli, else
+# ~/.config/glab-cli -- on macOS ~/Library/Application Support/glab-cli when
+# ~/.config/glab-cli does not exist. Mounting that host directory is enough to
+# be logged in as yourself -- but only when the token is in the file.
 # `glab auth login` puts it in the operating system keyring instead whenever one
 # is available, which is the default on macOS. The container has no keyring, so
 # in that case ask the host's own glab for the token and pass it in.
@@ -172,7 +174,15 @@ fi
 # `docker` command runs; --no-share-glab (CLAUDE_BOX_SHARE_GLAB=0) turns the whole
 # thing off and gives the box its own login under ~/.claude-box instead.
 # ---------------------------------------------------------------------------
-HOST_GLAB_DIR="$HOME/.config/glab-cli"
+if [ -n "${GLAB_CONFIG_DIR:-}" ]; then
+    HOST_GLAB_DIR="$GLAB_CONFIG_DIR"
+elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+    HOST_GLAB_DIR="$XDG_CONFIG_HOME/glab-cli"
+elif [ ! -d "$HOME/.config/glab-cli" ] && [ "$(uname -s)" = "Darwin" ]; then
+    HOST_GLAB_DIR="$HOME/Library/Application Support/glab-cli"
+else
+    HOST_GLAB_DIR="$HOME/.config/glab-cli"
+fi
 GLAB_NOTE="per-directory login"
 RUN_ENV=()
 if [ "$SHARE_GLAB" = "1" ] && [ -d "$HOST_GLAB_DIR" ]; then
@@ -185,7 +195,7 @@ if [ "$SHARE_GLAB" = "1" ] && [ -d "$HOST_GLAB_DIR" ]; then
          && command -v glab >/dev/null 2>&1; then
         GLAB_TOKEN="$( (cd "$DIR" && glab auth status --show-token 2>&1) \
                        | sed $'s/\033\\[[0-9;]*m//g' \
-                       | awk -F'Token: ' '/Token: /{print $2; exit}' \
+                       | sed -nE 's/.*Token( found)?: *//p' | head -n 1 \
                        | tr -d '[:space:]' || true )"
         if [ -n "$GLAB_TOKEN" ]; then
             RUN_ENV+=(-e "GITLAB_TOKEN=$GLAB_TOKEN")

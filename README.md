@@ -145,8 +145,11 @@ moved into the shared one on the first run, if the shared one is still empty.
 
 ## GitLab login
 
-`glab` reads `~/.config/glab-cli`. The box mounts that host directory at the same
-path, so `glab` in the box is logged in as you and needs no setup.
+`glab` reads its configuration from `$GLAB_CONFIG_DIR`, else `$XDG_CONFIG_HOME/glab-cli`,
+else `~/.config/glab-cli`. On macOS it uses `~/Library/Application Support/glab-cli`
+when `~/.config/glab-cli` does not exist. The script finds the host directory the
+same way and mounts it at `~/.config/glab-cli` in the box, so `glab` in the box is
+logged in as you and needs no setup.
 
 The token itself is often not in that directory. `glab auth login` puts it in the
 operating system keyring whenever there is one, which is the default on macOS,
