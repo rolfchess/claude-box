@@ -23,11 +23,11 @@
 # uses a banned word, and one reports words that reached a file another way. One
 # checks each Bash command: it blocks a commit or a request body that credits
 # Claude, and a merge request note that uses a banned word. The last two keep
-# the writing rules where the model reads them: one prints the rules again on
-# every user turn, every fifteenth tool batch and in the compact instructions,
-# and refuses a file edit, with the rules, when the last print is too old,
-# and one sends the changed documentation and the changed comments in code to a
-# small model to check what a regex cannot. That last one is off until you put
+# the writing rules where the model reads them. One prints the rules again on
+# every user turn, every fifteenth tool batch and in the compact instructions.
+# It also refuses a file edit, with the rules, when the last print is too old.
+# The other sends the changed documentation and the changed comments in code to
+# a small model to check what a regex cannot. That last one is off until you put
 # "env": { "CLAUDE_WRITING_STYLE_LLM": "1" } in your settings.json. A shell
 # export reaches a host session only, never a box.
 #
