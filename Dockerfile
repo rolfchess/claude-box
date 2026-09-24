@@ -66,7 +66,7 @@ RUN useradd --create-home --shell /bin/bash "${USERNAME}" \
                 /workspace \
     && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /workspace
 
-# Mounted repositories can be owned by a different uid than the claude user.
+# Mounted repositories can be owned by a user other than claude.
 # Trust them in the system config, since ~/.gitconfig is mounted read-only.
 RUN git config --system --add safe.directory '*'
 

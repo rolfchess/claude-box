@@ -26,7 +26,7 @@
 # credentials file, so you log in once for every worktree/project. Pass
 # --no-shared-auth to keep credentials per-directory instead.
 #
-# Your GitLab login is shared too: the box mounts the host's glab config
+      # Your GitLab login is shared too: the box mounts the host's glab config
 # directory, so `glab` in the box is logged in as you. `glab auth login` stores the token in
 # the operating system keyring when there is one, which is the default on macOS,
 # and the container has no keyring -- so the token is read once from the host's
