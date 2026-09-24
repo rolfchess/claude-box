@@ -54,7 +54,7 @@ claude-box ~/code/my-app         # mount a specific directory
 | `CLAUDE_BOX_HOME` | `~/.claude-box` | Where the per-project state lives |
 | `CLAUDE_BOX_BLOCK` | `git commit,git push` | Blocked commands |
 | `CLAUDE_BOX_BLOCK_PATHS` | `.m2/repository` | Blocked paths |
-| `CLAUDE_BOX_CONFIG_DIRS` | `dticket` | Directories under `~/.config` to mount |
+| `CLAUDE_BOX_CONFIG_DIRS` | `dticket sonarcloud` | Directories under `~/.config` to mount |
 | `CLAUDE_BOX_CONTAINER_NAME` | from the directory name | Container name |
 | `CLAUDE_BOX_KEEP` | `0` | `1` leaves the container up on exit |
 | `CLAUDE_BOX_NOTIFY` | `1` | `""` turns off the spoken notifications |
@@ -223,9 +223,10 @@ back to an in-place copy, so the host file stays in sync.
 
 ### App config (`~/.config/...`)
 
-So tools find their config natively, `~/.config/dticket` is mounted (if it exists
-on the host) at the same path in the box, read-write. No flag needed. Mount more
-with `CLAUDE_BOX_CONFIG_DIRS="dticket othertool"`. This is unaffected by
+So tools find their config natively, `~/.config/dticket` and
+`~/.config/sonarcloud` are mounted (if they exist on the host) at the same path
+in the box, read-write. No flag is needed. Mount more with
+`CLAUDE_BOX_CONFIG_DIRS="dticket sonarcloud othertool"`. This is unaffected by
 `--no-share`, which only governs `~/.claude`. Add `:ro` to the line in
 `claude-box` to make a mount read-only.
 

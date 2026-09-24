@@ -322,9 +322,9 @@ fi
 # App config dirs under ~/.config, mounted at the same path so tools find them
 # natively (e.g. dticket reads ~/.config/dticket). Mounted read-write so the
 # app behaves exactly as on the host; add :ro below if you prefer. Set
-# CLAUDE_BOX_CONFIG_DIRS="dticket foo" to mount more. Always on (not affected
+# CLAUDE_BOX_CONFIG_DIRS="dticket sonarcloud foo" to mount more. Always on (not affected
 # by --no-share, which only governs ~/.claude config).
-for sub in ${CLAUDE_BOX_CONFIG_DIRS:-dticket}; do
+for sub in ${CLAUDE_BOX_CONFIG_DIRS:-dticket sonarcloud}; do
     if [ -d "$HOME/.config/$sub" ]; then
         SHARE_MOUNTS+=(-v "$HOME/.config/$sub:/home/claude/.config/$sub")
     fi
