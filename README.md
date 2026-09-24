@@ -76,6 +76,8 @@ up — see [Testcontainers](#testcontainers). Claude starts in that directory.
 - **GitLab:** nothing to do. The box uses your host login — see
   [GitLab login](#gitlab-login).
 - Your host `~/.gitconfig` is mounted read-only, so commits get the right author.
+  The image sets `safe.directory = *` in the system git config, so git does not
+  refuse a mounted repository owned by another uid.
 
 ### Names, `--list` and shutdown
 
