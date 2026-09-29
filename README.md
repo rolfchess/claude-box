@@ -45,6 +45,7 @@ claude-box ~/code/my-app         # mount a specific directory
 | `--no-share-settings` | Do not merge the host `settings.json`, do not overlay `CLAUDE.md` |
 | `--no-shared-auth` | Keep the Claude login per directory |
 | `--no-notify` | Do not speak notifications |
+| `--allow-commit` | Allow `git commit`; `git push` stays blocked |
 | `--rebuild` | Rebuild the image, after editing the `Dockerfile` |
 | `--list` | List the boxes on this daemon and exit |
 | `--help` | Print the options |
@@ -245,6 +246,7 @@ layer.
 # ("git commit" matches "git … commit").
 CLAUDE_BOX_BLOCK="git commit,git push" claude-box ~/code/app
 CLAUDE_BOX_BLOCK="" claude-box ~/code/app          # off
+claude-box --allow-commit ~/code/app               # allow only git commit
 
 # Paths: any command whose text mentions one of these is blocked. This stops
 # Claude decompiling jars or reading classes in the Maven repo, while `mvn`

@@ -73,6 +73,8 @@
 #   --no-share-settings
 #                     Don't merge host settings.json / overlay CLAUDE.md.
 #   --no-notify       Don't speak notifications (same as CLAUDE_BOX_NOTIFY="").
+#   --allow-commit    Allow "git commit". It is removed from CLAUDE_BOX_BLOCK.
+#                     "git push" is still blocked.
 #   --rebuild         Force a rebuild of the image before starting.
 #   --list            List running claude-box containers and exit.
 #   -h, --help        Show this help.
@@ -93,6 +95,7 @@ SHARED_AUTH="${CLAUDE_BOX_SHARED_AUTH-1}"   # share one login across all boxes
 SHARED_MEMORY="${CLAUDE_BOX_SHARED_MEMORY-1}"   # one memory store per repository
 SHARE_GLAB="${CLAUDE_BOX_SHARE_GLAB-1}"   # use the host's GitLab login
 NO_NOTIFY=0
+ALLOW_COMMIT=0
 LIST=0
 NAME=""
 DIR=""
@@ -110,6 +113,7 @@ while [ $# -gt 0 ]; do
         --share-settings) SHARE_SETTINGS=1 ;;   # kept: now the default
         --no-share-settings) SHARE_SETTINGS=0 ;;
         --no-notify)      NO_NOTIFY=1 ;;
+        --allow-commit)   ALLOW_COMMIT=1 ;;
         --rebuild)        REBUILD=1 ;;
         --list|--ls)      LIST=1 ;;
         -h|--help)      usage; exit 0 ;;
@@ -390,6 +394,12 @@ fi
 # ---------------------------------------------------------------------------
 BLOCK_CMDS="${CLAUDE_BOX_BLOCK-git commit,git push}"
 BLOCK_PATHS="${CLAUDE_BOX_BLOCK_PATHS-.m2/repository}"
+if [ "$ALLOW_COMMIT" = "1" ]; then
+    # --allow-commit: drop every "git commit" entry, keep the rest of the list.
+    BLOCK_CMDS="$(printf '%s' "$BLOCK_CMDS" | tr ',' '\n' \
+        | grep -Ev '^[[:space:]]*git[[:space:]]+commit[[:space:]]*$' \
+        | paste -sd, - || true)"
+fi
 NOTIFY="${CLAUDE_BOX_NOTIFY-1}"    # spoken host notifications; set "" to disable
 [ "$NO_NOTIFY" = "1" ] && NOTIFY=""    # --no-notify overrides the env default
 SETTINGS_FILE="$PROJECT_STATE/claude/settings.json"
