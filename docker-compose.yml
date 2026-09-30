@@ -30,8 +30,11 @@ services:
       - "${CLAUDE_BOX_GITCONFIG:?run via the claude-box script}:/home/claude/.gitconfig:ro"
       # Maven cache, shared across all projects to avoid re-downloading the world
       - "claude-box-m2:/home/claude/.m2"
+      # Go module and build cache, shared across all projects
+      - "claude-box-go:/home/claude/go"
       # Host Docker daemon -> enables Testcontainers
       - "/var/run/docker.sock:/var/run/docker.sock"
 
 volumes:
   claude-box-m2:
+  claude-box-go:

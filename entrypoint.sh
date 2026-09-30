@@ -23,8 +23,8 @@ if [ -S "$SOCK" ]; then
     fi
 fi
 
-# Named volumes (the Maven cache) are created root-owned on first use.
-for d in "/home/${USERNAME}/.m2" "/home/${USERNAME}/.config"; do
+# Named volumes (the Maven and Go caches) are created root-owned on first use.
+for d in "/home/${USERNAME}/.m2" "/home/${USERNAME}/go" "/home/${USERNAME}/.config"; do
     if [ -d "$d" ] && [ "$(stat -c '%u' "$d")" = "0" ]; then
         chown "${USERNAME}:${USERNAME}" "$d" || true
     fi

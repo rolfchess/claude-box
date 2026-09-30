@@ -5,8 +5,9 @@ Run Claude Code inside a Docker container with permission prompts turned off
 directory. Each mounted directory gets its own state, and each repository gets
 its own memory, shared by all of its worktrees.
 
-Inside the image: `git`, `glab`, Maven 3.9 + JDK 21, Node.js 22 + Claude Code,
-and the Docker CLI (it talks to the host daemon, so Testcontainers works).
+The image has `git`, `glab`, Maven 3.9 + JDK 21, Go 1.27 + `gcc`, Node.js 22 +
+Claude Code, and the Docker CLI. cgo is on, so `go test -race` works. The Docker
+CLI talks to the host daemon, so Testcontainers works.
 
 ## Requirements
 
@@ -122,7 +123,8 @@ State lives on the host under `~/.claude-box/`:
 
 The `<hash>` comes from the full path, so two directories with the same name do
 not collide, and re-mounting a directory always reuses its state. The Maven
-cache (`~/.m2`) is one Docker volume shared by all projects.
+cache (`~/.m2`) and the Go cache (`~/go`) are Docker volumes shared by all
+projects.
 
 Memory is the one thing that is not per directory. Claude keeps it in
 `~/.claude/projects/<working directory>/memory`, so the store follows the path
@@ -350,7 +352,7 @@ model-backed check are in [`suggestions/README.md`](suggestions/README.md).
 | ---- | ------- |
 | `claude-box` | Start script: build, run, mounts, memory routing, guardrails |
 | `docker-compose.yml` | Service, volumes, Testcontainers env |
-| `Dockerfile` | Image: git, glab, Maven/JDK 21, Node, Claude Code |
+| `Dockerfile` | Image: git, glab, Maven/JDK 21, Go, gcc, Node, Claude Code |
 | `entrypoint.sh` | Fixes socket permissions, drops root → the `claude` user |
 | `install-defaults.sh` | Installs `suggestions/` into your `~/.claude` |
 | `suggestions/` | Shared rules and hooks, laid out like `~/.claude` |
