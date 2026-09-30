@@ -45,7 +45,7 @@ claude-box ~/code/my-app         # mount a specific directory
 | `--no-share-settings` | Do not merge the host `settings.json`, do not overlay `CLAUDE.md` |
 | `--no-shared-auth` | Keep the Claude login per directory |
 | `--no-notify` | Do not speak notifications |
-| `--allow-commit` | Allow `git commit`; `git push` stays blocked |
+| `--allow-commit` | Allow `git commit` and run `git add` with no prompt; `git push` stays blocked |
 | `--rebuild` | Rebuild the image, after editing the `Dockerfile` |
 | `--list` | List the boxes on this daemon and exit |
 | `--help` | Print the options |

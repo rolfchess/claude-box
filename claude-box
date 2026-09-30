@@ -74,7 +74,9 @@
 #                     Don't merge host settings.json / overlay CLAUDE.md.
 #   --no-notify       Don't speak notifications (same as CLAUDE_BOX_NOTIFY="").
 #   --allow-commit    Allow "git commit". It is removed from CLAUDE_BOX_BLOCK.
-#                     "git push" is still blocked.
+#                     The deny and ask rules for "git commit" and "git add"
+#                     in the host settings are removed. "git add" runs with
+#                     no prompt. "git push" is still blocked.
 #   --rebuild         Force a rebuild of the image before starting.
 #   --list            List running claude-box containers and exit.
 #   -h, --help        Show this help.
@@ -506,6 +508,20 @@ EOF
         | .hooks = (.hooks // {})
         | .hooks.PreToolUse = ((.hooks.PreToolUse // [])
             + [{matcher: "Bash", hooks: [{type: "command", command: $hook}]}])
+        ')"
+    WRITE_SETTINGS=1
+fi
+
+if [ "$ALLOW_COMMIT" = "1" ]; then
+    # --allow-commit: run "git add" and "git commit" with no prompt. Claude
+    # checks deny and ask rules before allow rules, so remove the deny and ask
+    # rules for both that come from the host settings.
+    SETTINGS="$(printf '%s' "$SETTINGS" | jq '
+        def keep: map(select(test("^Bash\\(git (add|commit)\\b") | not));
+        .permissions = (.permissions // {})
+        | .permissions.allow = ((.permissions.allow // []) + ["Bash(git add *)", "Bash(git add)"] | unique)
+        | .permissions.deny = ((.permissions.deny // []) | keep)
+        | .permissions.ask = ((.permissions.ask // []) | keep)
         ')"
     WRITE_SETTINGS=1
 fi
