@@ -86,6 +86,10 @@ RUN useradd --create-home --shell /bin/bash "${USERNAME}" \
 # Trust them in the system config, since ~/.gitconfig is mounted read-only.
 RUN git config --system --add safe.directory '*'
 
+# git status and git diff do not refresh the index, so they never take
+# index.lock. The repo is shared with the host, where other git processes run.
+ENV GIT_OPTIONAL_LOCKS=0
+
 # Keep Maven's local repo + config under the claude user's home (mounted volume).
 ENV MAVEN_CONFIG=/home/claude/.m2
 
