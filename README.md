@@ -6,8 +6,9 @@ directory. Each mounted directory gets its own state, and each repository gets
 its own memory, shared by all of its worktrees.
 
 The image has `git`, `glab`, Maven 3.9 + JDK 21, Go 1.27 + `gcc`, Node.js 22 +
-Claude Code, and the Docker CLI. cgo is on, so `go test -race` works. The Docker
-CLI talks to the host daemon, so Testcontainers works.
+Claude Code, [`sigmap`](https://sigmap.io/), and the Docker CLI. cgo is on, so
+`go test -race` works. The Docker CLI connects to the host daemon, so
+Testcontainers works.
 
 ## Requirements
 
@@ -106,6 +107,38 @@ In a worktree, `.git` is a file pointing at the parent repository, outside the
 mounted directory, so git in the box cannot find its repository. `claude-box`
 bind-mounts that one parent `.git` directory at its real host path. Nothing else
 from the parent repository is mounted, and the guardrails below still apply.
+
+## Code navigation with sigmap
+
+The image has [`sigmap`](https://sigmap.io/) installed globally. It builds an
+index of the function and class signatures in a project. Claude uses the index
+to find the right files without reading the whole codebase. It works offline.
+
+Build the index once in the project, from Claude or from `--shell`:
+
+```bash
+sigmap                                 # index the project
+sigmap ask "explain the auth flow"     # rank the files that answer a question
+```
+
+Claude also has the sigmap tools as an MCP server, with no setup. The image has
+the server in `/etc/claude-box/mcp.json`, and the box starts Claude with
+`--mcp-config /etc/claude-box/mcp.json`. Run `/mcp` in Claude to see it.
+
+If you start Claude yourself from `--shell`, pass the same flag:
+
+```bash
+claude --mcp-config /etc/claude-box/mcp.json --dangerously-skip-permissions
+```
+
+To add more MCP servers to every box, add them to `/etc/claude-box/mcp.json` in
+the `Dockerfile` and run `claude-box --rebuild`. Do not use
+`sigmap mcp install claude`: it writes an absolute path into the project's
+`.claude/settings.json`.
+
+sigmap writes files into the project: `.context/` and
+`.github/copilot-instructions.md`. `sigmap --adapter claude` adds a section to
+`CLAUDE.md`. Add these to `.gitignore`, or commit them on purpose.
 
 ## State and memory
 
@@ -352,7 +385,7 @@ model-backed check are in [`suggestions/README.md`](suggestions/README.md).
 | ---- | ------- |
 | `claude-box` | Start script: build, run, mounts, memory routing, guardrails |
 | `docker-compose.yml` | Service, volumes, Testcontainers env |
-| `Dockerfile` | Image: git, glab, Maven/JDK 21, Go, gcc, Node, Claude Code |
+| `Dockerfile` | Image: git, glab, Maven/JDK 21, Go, gcc, Node, Claude Code, sigmap |
 | `entrypoint.sh` | Fixes socket permissions, drops root → the `claude` user |
 | `install-defaults.sh` | Installs `suggestions/` into your `~/.claude` |
 | `suggestions/` | Shared rules and hooks, laid out like `~/.claude` |

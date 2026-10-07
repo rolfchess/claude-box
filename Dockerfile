@@ -5,6 +5,7 @@ ARG NODE_MAJOR=22
 ARG GOSU_VERSION=1.17
 ARG USERNAME=claude
 ARG GO_VERSION=1.27.1
+ARG SIGMAP_VERSION=8.69.0
 ARG GO_SHA256_AMD64=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
 ARG GO_SHA256_ARM64=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
 
@@ -13,7 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # ---------------------------------------------------------------------------
 # Base tooling: git, curl, jq, ripgrep, gcc, gosu, Node.js, Go, Docker CLI,
-# glab, and Claude Code itself.
+# glab, sigmap, and Claude Code itself.
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     apt-get update; \
@@ -67,6 +68,10 @@ RUN set -eux; \
     # --- Claude Code ---
     npm install -g @anthropic-ai/claude-code; \
     \
+    # --- sigmap (code signature index for Claude, https://sigmap.io/) ---
+    npm install -g "sigmap@${SIGMAP_VERSION}"; \
+    sigmap --version; \
+    \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
@@ -101,8 +106,15 @@ ENV PATH=/usr/local/go/bin:/home/claude/go/bin:${PATH} \
     CGO_ENABLED=1 \
     CC=gcc
 
+# MCP servers for every box. The start script passes this file to Claude with
+# --mcp-config. `claude mcp add` at build time would not work: the box mounts
+# its own ~/.claude.json over the one in the image.
+RUN mkdir -p /etc/claude-box \
+    && printf '%s\n' '{"mcpServers":{"sigmap":{"type":"stdio","command":"sigmap","args":["--mcp"]}}}' \
+        > /etc/claude-box/mcp.json
+
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["claude", "--dangerously-skip-permissions"]
+CMD ["claude", "--mcp-config", "/etc/claude-box/mcp.json", "--dangerously-skip-permissions"]

@@ -88,7 +88,7 @@ CLAUDE_BOX_HOME="${CLAUDE_BOX_HOME:-$HOME/.claude-box}"
 
 usage() { sed -n '2,/-h, --help/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
-CMD=(claude --dangerously-skip-permissions)
+CMD=(claude --mcp-config /etc/claude-box/mcp.json --dangerously-skip-permissions)
 MIRROR_PATH=1
 REBUILD=0
 SHARE_CONFIG=1
