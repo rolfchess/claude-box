@@ -48,6 +48,8 @@ claude-box ~/code/my-app         # mount a specific directory
 | `--no-shared-auth` | Keep the Claude login per directory |
 | `--no-notify` | Do not speak notifications |
 | `--allow-commit` | Allow `git commit` and run `git add` with no prompt; `git push` stays blocked |
+| `-r`, `--resume [ID]` | Resume a conversation, as `claude --resume` |
+| `-c`, `--continue` | Continue the last conversation, as `claude --continue` |
 | `--rebuild` | Rebuild the image, after editing the `Dockerfile` |
 | `--list` | List the boxes on this daemon and exit |
 | `--help` | Print the options |
@@ -100,6 +102,23 @@ On macOS the box speaks a line through `say` when Claude finishes a turn or need
 your input, so you can leave it running. It says the `--name` value, or the
 directory name. The 60-second "waiting for your input" notification is left out:
 it is not actionable and it misfires while background agents are still running.
+
+### Resume a conversation
+
+The box passes `--resume` and `--continue` to Claude, with the same meaning as
+in `claude`:
+
+```bash
+claude-box --continue            # continue the last conversation here
+claude-box --resume              # pick a conversation from a list
+claude-box --resume <session-id> # resume that conversation
+```
+
+The transcripts are in the Claude home of the directory, on the host (see
+[State and memory](#state-and-memory)), so they stay when the container stops.
+Run the command from the same directory, and with `--workspace` if the first run
+used it: Claude lists only the conversations of the path it starts in. Claude
+deletes transcripts older than `cleanupPeriodDays` (30 days by default).
 
 ### Git worktrees
 

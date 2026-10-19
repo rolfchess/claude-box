@@ -77,6 +77,10 @@
 #                     The deny and ask rules for "git commit" and "git add"
 #                     in the host settings are removed. "git add" runs with
 #                     no prompt. "git push" is still blocked.
+#   -r, --resume [ID] Resume a conversation, as `claude --resume`. With no ID,
+#                     Claude shows a list to pick from.
+#   -c, --continue    Continue the last conversation in this directory, as
+#                     `claude --continue`.
 #   --rebuild         Force a rebuild of the image before starting.
 #   --list            List running claude-box containers and exit.
 #   -h, --help        Show this help.
@@ -99,12 +103,24 @@ SHARE_GLAB="${CLAUDE_BOX_SHARE_GLAB-1}"   # use the host's GitLab login
 NO_NOTIFY=0
 ALLOW_COMMIT=0
 LIST=0
+SHELL_MODE=0
+RESUME_ARGS=()
 NAME=""
 DIR=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --shell)          CMD=(bash) ;;
+        --shell)          CMD=(bash); SHELL_MODE=1 ;;
+        -r|--resume)
+            # The ID is optional. The next argument is the ID unless it is an
+            # option or an existing directory.
+            if [ $# -gt 1 ] && [ "${2#-}" = "$2" ] && [ ! -d "$2" ]; then
+                RESUME_ARGS=(--resume "$2"); shift
+            else
+                RESUME_ARGS=(--resume)
+            fi ;;
+        --resume=*)       RESUME_ARGS=(--resume "${1#*=}") ;;
+        -c|--continue)    RESUME_ARGS=(--continue) ;;
         --name)           NAME="${2-}"; shift ;;
         --name=*)         NAME="${1#*=}" ;;
         --workspace)      MIRROR_PATH=0 ;;
@@ -125,6 +141,12 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+if [ "$SHELL_MODE" = "1" ] && [ "${#RESUME_ARGS[@]}" -gt 0 ]; then
+    echo "Error: --resume and --continue do not work with --shell." >&2
+    exit 1
+fi
+CMD+=(${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"})
 
 # --list: show every box on this daemon, found by label rather than by name, so
 # it still works for boxes renamed via CLAUDE_BOX_CONTAINER_NAME.
