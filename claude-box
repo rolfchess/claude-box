@@ -80,7 +80,10 @@
 #   -r, --resume [ID] Resume a conversation, as `claude --resume`. With no ID,
 #                     Claude shows a list to pick from.
 #   -c, --continue    Continue the last conversation in this directory, as
-#                     `claude --continue`.
+#                     `claude --continue`. If a box for this directory is still
+#                     running, attach to it instead of starting a new one.
+#                     With no other options, --resume and --continue use the
+#                     options of the last run in this directory again.
 #   --rebuild         Force a rebuild of the image before starting.
 #   --list            List running claude-box containers and exit.
 #   -h, --help        Show this help.
@@ -108,45 +111,52 @@ RESUME_ARGS=()
 NAME=""
 DIR=""
 
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --shell)          CMD=(bash); SHELL_MODE=1 ;;
-        -r|--resume)
-            # The ID is optional. The next argument is the ID unless it is an
-            # option or an existing directory.
-            if [ $# -gt 1 ] && [ "${2#-}" = "$2" ] && [ ! -d "$2" ]; then
-                RESUME_ARGS=(--resume "$2"); shift
-            else
-                RESUME_ARGS=(--resume)
-            fi ;;
-        --resume=*)       RESUME_ARGS=(--resume "${1#*=}") ;;
-        -c|--continue)    RESUME_ARGS=(--continue) ;;
-        --name)           NAME="${2-}"; shift ;;
-        --name=*)         NAME="${1#*=}" ;;
-        --workspace)      MIRROR_PATH=0 ;;
-        --no-share)       SHARE_CONFIG=0; SHARE_SETTINGS=0 ;;
-        --no-shared-auth) SHARED_AUTH=0 ;;
-        --no-shared-memory) SHARED_MEMORY=0 ;;
-        --no-share-glab)  SHARE_GLAB=0 ;;
-        --share-settings) SHARE_SETTINGS=1 ;;   # kept: now the default
-        --no-share-settings) SHARE_SETTINGS=0 ;;
-        --no-notify)      NO_NOTIFY=1 ;;
-        --allow-commit)   ALLOW_COMMIT=1 ;;
-        --rebuild)        REBUILD=1 ;;
-        --list|--ls)      LIST=1 ;;
-        -h|--help)      usage; exit 0 ;;
-        --)             shift; break ;;
-        -*)             echo "Unknown option: $1" >&2; usage; exit 1 ;;
-        *)              DIR="$1" ;;
-    esac
-    shift
-done
+# Options to remember for the next --resume or --continue (see below).
+SAVE_ARGS=()
+OTHER_OPTS=0     # 1 when an option other than --resume, --continue or --rebuild is given
 
-if [ "$SHELL_MODE" = "1" ] && [ "${#RESUME_ARGS[@]}" -gt 0 ]; then
-    echo "Error: --resume and --continue do not work with --shell." >&2
-    exit 1
-fi
-CMD+=(${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"})
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -r|--resume)
+                # The ID is optional. The next argument is the ID unless it is an
+                # option or an existing directory.
+                if [ $# -gt 1 ] && [ "${2#-}" = "$2" ] && [ ! -d "$2" ]; then
+                    RESUME_ARGS=(--resume "$2"); shift
+                else
+                    RESUME_ARGS=(--resume)
+                fi ;;
+            --resume=*)       RESUME_ARGS=(--resume "${1#*=}") ;;
+            -c|--continue)    RESUME_ARGS=(--continue) ;;
+            --rebuild)        REBUILD=1 ;;
+            --list|--ls)      LIST=1 ;;
+            -h|--help)        usage; exit 0 ;;
+            --)               shift; break ;;
+            -*)
+                OTHER_OPTS=1
+                SAVE_ARGS+=("$1")
+                case "$1" in
+                    --shell)          CMD=(bash); SHELL_MODE=1 ;;
+                    --name)           NAME="${2-}"; SAVE_ARGS+=("${2-}"); shift ;;
+                    --name=*)         NAME="${1#*=}" ;;
+                    --workspace)      MIRROR_PATH=0 ;;
+                    --no-share)       SHARE_CONFIG=0; SHARE_SETTINGS=0 ;;
+                    --no-shared-auth) SHARED_AUTH=0 ;;
+                    --no-shared-memory) SHARED_MEMORY=0 ;;
+                    --no-share-glab)  SHARE_GLAB=0 ;;
+                    --share-settings) SHARE_SETTINGS=1 ;;   # kept: now the default
+                    --no-share-settings) SHARE_SETTINGS=0 ;;
+                    --no-notify)      NO_NOTIFY=1 ;;
+                    --allow-commit)   ALLOW_COMMIT=1 ;;
+                    *)                echo "Unknown option: $1" >&2; usage; exit 1 ;;
+                esac ;;
+            *)                DIR="$1" ;;
+        esac
+        shift
+    done
+}
+
+parse_args "$@"
 
 # --list: show every box on this daemon, found by label rather than by name, so
 # it still works for boxes renamed via CLAUDE_BOX_CONTAINER_NAME.
@@ -171,6 +181,34 @@ KEY="${SLUG}-${HASH}"
 
 PROJECT_STATE="$CLAUDE_BOX_HOME/projects/$KEY"
 mkdir -p "$PROJECT_STATE/claude" "$PROJECT_STATE/glab"
+
+# Options of the last Claude run in this directory. With no other options,
+# --resume and --continue use them again, so the box starts as it did then.
+# Given with other options, those options are used instead. --rebuild and the directory are
+# not stored. Each option in the file ends with a NUL byte.
+ARGS_FILE="$PROJECT_STATE/last-args"
+if [ "${#RESUME_ARGS[@]}" -gt 0 ] && [ "$OTHER_OPTS" = "0" ] && [ -s "$ARGS_FILE" ]; then
+    SAVED_ARGS=()
+    while IFS= read -r -d '' arg; do SAVED_ARGS+=("$arg"); done < "$ARGS_FILE"
+    if [ "${#SAVED_ARGS[@]}" -gt 0 ]; then
+        parse_args "${SAVED_ARGS[@]}"
+        echo ">> Options:  ${SAVED_ARGS[*]} (from the last run)"
+    fi
+fi
+
+if [ "$SHELL_MODE" = "1" ] && [ "${#RESUME_ARGS[@]}" -gt 0 ]; then
+    echo "Error: --resume and --continue do not work with --shell." >&2
+    exit 1
+fi
+CMD+=(${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"})
+
+if [ "$SHELL_MODE" = "0" ]; then
+    if [ "${#SAVE_ARGS[@]}" -gt 0 ]; then
+        printf '%s\0' "${SAVE_ARGS[@]}" > "$ARGS_FILE"
+    else
+        : > "$ARGS_FILE"
+    fi
+fi
 
 # Git identity: reuse the host gitconfig if present, else an empty placeholder.
 if [ -f "$HOME/.gitconfig" ]; then
@@ -447,7 +485,22 @@ NAME_SLUG="$(printf '%s' "$LABEL" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_.-' '-' \
 NAME_SLUG="$(printf '%s' "$NAME_SLUG" | sed -E 's/[-_.]+$//')"   # cut may leave a trailing -
 CONTAINER_BASE="claude-box${NAME_SLUG:+-$NAME_SLUG}"
 CONTAINER_NAME="${CLAUDE_BOX_CONTAINER_NAME:-$CONTAINER_BASE}"
-if [ -z "${CLAUDE_BOX_CONTAINER_NAME:-}" ]; then
+
+# --continue when a box for this directory is still running, for example after
+# CLAUDE_BOX_KEEP=1 and a closed terminal: attach to the Claude process in it
+# instead of starting a new container. --rebuild always starts a new one. The box
+# keeps the settings and hooks it started with; they are not written again.
+ATTACH=0
+if [ "${RESUME_ARGS[0]-}" = "--continue" ] && [ "$REBUILD" = "0" ]; then
+    RUNNING="$(docker ps --filter "label=claude-box.dir=$DIR" --filter status=running \
+                   --format '{{.Names}}' | head -n 1)"
+    if [ -n "$RUNNING" ]; then
+        ATTACH=1
+        CONTAINER_NAME="$RUNNING"
+    fi
+fi
+
+if [ "$ATTACH" = "0" ] && [ -z "${CLAUDE_BOX_CONTAINER_NAME:-}" ]; then
     n=2
     while docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; do
         if [ "$n" -gt 20 ]; then CONTAINER_NAME="$CONTAINER_BASE-$HASH"; break; fi
@@ -481,7 +534,7 @@ fi
 WRITE_SETTINGS=0
 [ "$SHARE_SETTINGS" = "1" ] && [ -f "$HOME/.claude/settings.json" ] && WRITE_SETTINGS=1
 
-if [ -n "$BLOCK_CMDS" ] || [ -n "$BLOCK_PATHS" ]; then
+if [ "$ATTACH" = "0" ] && { [ -n "$BLOCK_CMDS" ] || [ -n "$BLOCK_PATHS" ]; }; then
     mkdir -p "$PROJECT_STATE/claude/hooks"
     DENY_JSON='[]'
     REGEX=''
@@ -534,7 +587,7 @@ EOF
     WRITE_SETTINGS=1
 fi
 
-if [ "$ALLOW_COMMIT" = "1" ]; then
+if [ "$ATTACH" = "0" ] && [ "$ALLOW_COMMIT" = "1" ]; then
     # --allow-commit: run "git add" and "git commit" with no prompt. Claude
     # checks deny and ask rules before allow rules, so remove the deny and ask
     # rules for both that come from the host settings.
@@ -552,7 +605,7 @@ fi
 # log; a host-side watcher (started below) reads it and runs `say`. The log
 # lives in the per-project Claude home, so it is already bind-mounted at
 # ~/.claude inside the box -- no extra mount needed.
-if [ -n "$NOTIFY" ]; then
+if [ "$ATTACH" = "0" ] && [ -n "$NOTIFY" ]; then
     mkdir -p "$PROJECT_STATE/claude/hooks"
     cat > "$NOTIFY_HOOK" <<EOF
 #!/usr/bin/env bash
@@ -590,19 +643,23 @@ EOF
     WRITE_SETTINGS=1
 fi
 
-[ "$WRITE_SETTINGS" = "1" ] && printf '%s' "$SETTINGS" > "$SETTINGS_FILE"
+[ "$ATTACH" = "0" ] && [ "$WRITE_SETTINGS" = "1" ] && printf '%s' "$SETTINGS" > "$SETTINGS_FILE"
 
 compose() { docker compose -f "$SCRIPT_DIR/docker-compose.yml" "$@"; }
 
 # Build on first use or when asked.
-if [ "$REBUILD" = "1" ] || ! docker image inspect claude-box:latest >/dev/null 2>&1; then
+if [ "$ATTACH" = "0" ] && { [ "$REBUILD" = "1" ] || ! docker image inspect claude-box:latest >/dev/null 2>&1; }; then
     echo ">> Building claude-box image..."
     compose build
 fi
 
 echo ">> Project:  $DIR"
 echo ">> Mounted:  $WORKDIR"
-echo ">> Container: $CONTAINER_NAME"
+if [ "$ATTACH" = "1" ]; then
+    echo ">> Container: $CONTAINER_NAME (already running)"
+else
+    echo ">> Container: $CONTAINER_NAME"
+fi
 echo ">> Home:     $PROJECT_STATE/claude"
 echo ">> Memory:   $MEM_DIR ($(ls -1 "$MEM_DIR" 2>/dev/null | wc -l | tr -d ' ') files, $MEM_SCOPE)"
 if [ "${#SHARE_MOUNTS[@]}" -gt 0 ]; then
@@ -671,10 +728,15 @@ if [ -n "$NOTIFY" ] && command -v say >/dev/null 2>&1; then
     echo ">> Notify:   spoken via \`say\` on finish + needs-input (name: $SAY_LABEL)"
 fi
 
-echo ">> Starting container (Ctrl-D / 'exit' to leave)..."
-
 # Not exec'd: we stay alive so the trap can stop the notifier afterwards.
 STATUS=0
+if [ "$ATTACH" = "1" ]; then
+    echo ">> Attaching to the running container..."
+    docker attach "$CONTAINER_NAME" || STATUS=$?
+    exit $STATUS
+fi
+
+echo ">> Starting container (Ctrl-D / 'exit' to leave)..."
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" run --rm --name "$CONTAINER_NAME" \
     "${BOX_LABELS[@]}" \
     ${RUN_ENV[@]+"${RUN_ENV[@]}"} \

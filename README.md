@@ -120,6 +120,18 @@ Run the command from the same directory, and with `--workspace` if the first run
 used it: Claude lists only the conversations of the path it starts in. Claude
 deletes transcripts older than `cleanupPeriodDays` (30 days by default).
 
+The box stores the options of each Claude run in the directory, in
+`~/.claude-box/projects/<dir>-<hash>/last-args`. With no other options,
+`--resume` and `--continue` use them again, so `claude-box --continue` starts
+the box as the last run did. If you give other options too, the box uses those instead.
+`--rebuild` is not stored, and a `--shell` run does not change the file.
+Environment variables such as `CLAUDE_BOX_BLOCK` are not stored either.
+
+If a box for the directory is still running, for example after
+`CLAUDE_BOX_KEEP=1` and a closed terminal, `--continue` attaches to the Claude
+process in it, with `docker attach`, instead of starting a new container. The box
+keeps the settings it started with. `--rebuild` always starts a new container.
+
 ### Git worktrees
 
 In a worktree, `.git` is a file pointing at the parent repository, outside the
