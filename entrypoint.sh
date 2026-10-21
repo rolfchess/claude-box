@@ -30,4 +30,12 @@ for d in "/home/${USERNAME}/.m2" "/home/${USERNAME}/go" "/home/${USERNAME}/.conf
     fi
 done
 
+# Git writes trace2 event files only into a directory that exists. One file is
+# written per git process, so delete files older than two days.
+if [ -n "${GIT_TRACE2_EVENT:-}" ]; then
+    mkdir -p "$GIT_TRACE2_EVENT"
+    chown "${USERNAME}:${USERNAME}" "$GIT_TRACE2_EVENT" || true
+    find "$GIT_TRACE2_EVENT" -type f -mtime +1 -delete 2>/dev/null || true
+fi
+
 exec gosu "$USERNAME" "$@"

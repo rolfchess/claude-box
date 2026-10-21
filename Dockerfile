@@ -95,6 +95,12 @@ RUN git config --system --add safe.directory '*'
 # index.lock. The repo is shared with the host, where other git processes run.
 ENV GIT_OPTIONAL_LOCKS=0
 
+# Every git process writes one trace2 event file here: its command line, its
+# parent processes and its exit. A process with no exit event was killed.
+# git-lock-report lists those. The directory is in the per-project Claude home,
+# so it survives the container. The entrypoint creates it.
+ENV GIT_TRACE2_EVENT=/home/claude/.claude/git-trace2
+
 # Keep Maven's local repo + config under the claude user's home (mounted volume).
 ENV MAVEN_CONFIG=/home/claude/.m2
 
@@ -114,7 +120,8 @@ RUN mkdir -p /etc/claude-box \
         > /etc/claude-box/mcp.json
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY git-lock-report /usr/local/bin/git-lock-report
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/git-lock-report
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["claude", "--mcp-config", "/etc/claude-box/mcp.json", "--dangerously-skip-permissions"]

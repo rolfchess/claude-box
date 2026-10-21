@@ -139,6 +139,26 @@ mounted directory, so git in the box cannot find its repository. `claude-box`
 bind-mounts that one parent `.git` directory at its real host path. Nothing else
 from the parent repository is mounted, and the guardrails below still apply.
 
+### Stuck git lock files
+
+Git leaves a lock file such as `.git/index.lock` behind when a git process is
+killed with SIGKILL during a write. Every git process in the box writes a trace2
+event file to `~/.claude/git-trace2`. On the host, the path is
+`~/.claude-box/projects/<key>/claude/git-trace2`. Files older than two days are
+deleted when the box starts.
+
+When a lock is stuck, run `/usr/local/bin/git-lock-report` in the box. It is on
+the `PATH`:
+
+```bash
+git-lock-report          # git processes with no exit event, newest last
+git-lock-report --all    # every git process
+```
+
+The newest process marked `NO EXIT` that ran a write command (`add`,
+`checkout`, `stash` and so on) made the lock. `parents` shows what started it.
+`RUNNING` means the process is still alive and still has the lock.
+
 ## Code navigation with sigmap
 
 The image has [`sigmap`](https://sigmap.io/) installed globally. It builds an
@@ -418,5 +438,6 @@ model-backed check are in [`suggestions/README.md`](suggestions/README.md).
 | `docker-compose.yml` | Service, volumes, Testcontainers env |
 | `Dockerfile` | Image: git, glab, Maven/JDK 21, Go, gcc, Node, Claude Code, sigmap |
 | `entrypoint.sh` | Fixes socket permissions, drops root → the `claude` user |
+| `git-lock-report` | Lists git processes that were killed, from the trace2 log |
 | `install-defaults.sh` | Installs `suggestions/` into your `~/.claude` |
 | `suggestions/` | Shared rules and hooks, laid out like `~/.claude` |

@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""List the git processes in the trace2 log that never wrote an exit event.
+
+Every git process in the box writes one event file to $GIT_TRACE2_EVENT. A
+process killed with a signal has a start event and no exit event. When a lock
+file stays behind, the last such process that ran a write command made it.
+
+Usage: git-lock-report [--all] [--last N] [trace-dir]
+"""
+
+import argparse
+import datetime
+import json
+import os
+import re
+import sys
+
+
+def read_events(path):
+    events = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    events.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return events
+
+
+def pid_of(sid):
+    """The process id from a trace2 session id, which ends in -P<hex pid>."""
+    match = re.search(r"-P([0-9a-f]+)$", sid or "")
+    return int(match.group(1), 16) if match else None
+
+
+def is_running(pid):
+    if pid is None:
+        return False
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            return b"git" in handle.read()
+    except OSError:
+        return False
+
+
+def summarise(path):
+    events = read_events(path)
+    start = next((e for e in events if e.get("event") == "start"), None)
+    if start is None:
+        return None
+    names = {e.get("event") for e in events}
+    ancestry = next((e.get("ancestry") for e in events
+                     if e.get("event") == "cmd_ancestry"), None)
+    repo = next((e.get("worktree") for e in events
+                 if e.get("event") == "def_repo"), None)
+    exit_event = next((e for e in events if e.get("event") == "exit"), None)
+    pid = pid_of(start.get("sid"))
+    return {
+        "time": start.get("time", ""),
+        "pid": pid,
+        "argv": start.get("argv", []),
+        "ancestry": ancestry or [],
+        "repo": repo or "",
+        "exited": "exit" in names or "atexit" in names,
+        "code": exit_event.get("code") if exit_event else None,
+        "running": is_running(pid),
+    }
+
+
+def local_time(stamp):
+    try:
+        moment = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return stamp
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("dir", nargs="?", default=os.environ.get("GIT_TRACE2_EVENT"))
+    parser.add_argument("--all", action="store_true",
+                        help="list every git process, not only those with no exit")
+    parser.add_argument("--last", type=int, default=20,
+                        help="show the last N processes (default 20)")
+    args = parser.parse_args()
+
+    if not args.dir or not os.path.isdir(args.dir):
+        print(f"git-lock-report: no trace directory: {args.dir!r}", file=sys.stderr)
+        return 1
+
+    rows = []
+    for name in os.listdir(args.dir):
+        row = summarise(os.path.join(args.dir, name))
+        if row and (args.all or not row["exited"]):
+            rows.append(row)
+    rows.sort(key=lambda r: r["time"])
+
+    for row in rows[-args.last:]:
+        if row["running"]:
+            state = "RUNNING"
+        elif row["exited"]:
+            state = f"exit {row['code']}"
+        else:
+            state = "NO EXIT"
+        print(f"{local_time(row['time'])}  pid {row['pid']}  {state}")
+        print(f"    {' '.join(row['argv'])}")
+        print(f"    parents: {' <- '.join(row['ancestry'])}")
+        if row["repo"]:
+            print(f"    repo:    {row['repo']}")
+    if not rows:
+        print("No git process without an exit event.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
