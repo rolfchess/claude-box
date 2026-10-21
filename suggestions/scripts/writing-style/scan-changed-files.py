@@ -58,6 +58,9 @@ MAX_UNTRACKED_BYTES = 256_000
 MAX_UNTRACKED_FILES = 50
 MAX_REPORTED = 20
 
+# Seconds per git call. Claude Code kills the hook after 15 seconds.
+GIT_TIMEOUT = 10
+
 
 def load_checker():
     """The check-forbidden-words module, imported by path.
@@ -75,8 +78,9 @@ def git(root, *args):
     """Run a git command in root and return its stdout, or None if it fails."""
     try:
         result = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "-C", root, *args],
-            capture_output=True, timeout=30,
+            ["git", "--no-optional-locks", "-c", "core.quotepath=false",
+             "-C", root, *args],
+            capture_output=True, timeout=GIT_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError):
         return None
