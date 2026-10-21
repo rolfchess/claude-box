@@ -79,7 +79,7 @@ def git(root, *args):
     try:
         result = subprocess.run(
             ["git", "--no-optional-locks", "-c", "core.quotepath=false",
-             "-C", root, *args],
+             "-c", "core.checkStat=minimal", "-C", root, *args],
             capture_output=True, timeout=GIT_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError):

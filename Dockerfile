@@ -91,6 +91,11 @@ RUN useradd --create-home --shell /bin/bash "${USERNAME}" \
 # Trust them in the system config, since ~/.gitconfig is mounted read-only.
 RUN git config --system --add safe.directory '*'
 
+# The owner and inode of a file differ between the host and the box, so git
+# would see every file as changed and re-read the whole worktree. Compare only
+# mtime, size and mode.
+RUN git config --system core.checkStat minimal
+
 # git status and git diff do not refresh the index, so they never take
 # index.lock. The repo is shared with the host, where other git processes run.
 ENV GIT_OPTIONAL_LOCKS=0
