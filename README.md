@@ -264,6 +264,11 @@ The token is passed with `docker run -e`, so it is in the host's process list
 while the `docker` command runs, and in `docker inspect` for the life of the
 container. Both are on your own machine, where the token is readable anyway.
 
+`git` uses the same token. The box has no SSH key, so the image rewrites
+`git@gitlab.com:` remotes to HTTPS and gives git `GITLAB_TOKEN` as the password.
+This is in git's system config in the image. The remote URLs in your repository
+do not change.
+
 | Flag / variable | Effect |
 | --------------- | ------ |
 | `--no-share-glab` | Use a login of its own, under `~/.claude-box/projects/<key>/glab`. Run `glab auth login` in the box once (`CLAUDE_BOX_SHARE_GLAB=0`). |

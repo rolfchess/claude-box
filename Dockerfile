@@ -96,6 +96,13 @@ RUN git config --system --add safe.directory '*'
 # mtime, size and mode.
 RUN git config --system core.checkStat minimal
 
+# The box has no SSH key. Git reaches gitlab.com over HTTPS instead, with
+# GITLAB_TOKEN as the password. The remote URLs in the repository do not change.
+RUN git config --system url."https://gitlab.com/".insteadOf "git@gitlab.com:" \
+    && git config --system --add url."https://gitlab.com/".insteadOf "ssh://git@gitlab.com/" \
+    && git config --system credential."https://gitlab.com".helper \
+        '!f() { echo username=oauth2; echo "password=$GITLAB_TOKEN"; }; f'
+
 # git status and git diff do not refresh the index, so they never take
 # index.lock. The repo is shared with the host, where other git processes run.
 ENV GIT_OPTIONAL_LOCKS=0
