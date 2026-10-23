@@ -261,7 +261,7 @@ if [ "$SHARE_GLAB" = "1" ] && [ -d "$HOST_GLAB_DIR" ]; then
          && command -v glab >/dev/null 2>&1; then
         GLAB_TOKEN="$( (cd "$DIR" && glab auth status --show-token 2>&1) \
                        | sed $'s/\033\\[[0-9;]*m//g' \
-                       | sed -nE 's/.*Token( found)?: *//p' | head -n 1 \
+                       | sed -nE 's/.*Token[^:]*: *//p' | head -n 1 \
                        | tr -d '[:space:]' || true )"
         if [ -n "$GLAB_TOKEN" ]; then
             RUN_ENV+=(-e "GITLAB_TOKEN=$GLAB_TOKEN")
