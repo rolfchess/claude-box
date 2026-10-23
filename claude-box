@@ -26,8 +26,8 @@
 # credentials file, so you log in once for every worktree/project. Pass
 # --no-shared-auth to keep credentials per-directory instead.
 #
-      # Your GitLab login is shared too: the box mounts the host's glab config
-# directory, so `glab` in the box is logged in as you. `glab auth login` stores the token in
+# Your GitLab login is shared too: the box gets a copy of the host's glab config,
+# so `glab` in the box is logged in as you. Changes in the box stay in the box. `glab auth login` stores the token in
 # the operating system keyring when there is one, which is the default on macOS,
 # and the container has no keyring -- so the token is read once from the host's
 # own glab and passed in as GITLAB_TOKEN. Pass --no-share-glab for a login that
@@ -228,8 +228,8 @@ fi
 # ---------------------------------------------------------------------------
 # GitLab login. glab reads $GLAB_CONFIG_DIR, else $XDG_CONFIG_HOME/glab-cli, else
 # ~/.config/glab-cli -- on macOS ~/Library/Application Support/glab-cli when
-# ~/.config/glab-cli does not exist. Mounting that host directory is enough to
-# be logged in as yourself -- but only when the token is in the file.
+# ~/.config/glab-cli does not exist. A copy of that host config is enough to be
+# logged in as yourself -- but only when the token is in the file.
 # `glab auth login` puts it in the operating system keyring instead whenever one
 # is available, which is the default on macOS. The container has no keyring, so
 # in that case ask the host's own glab for the token and pass it in.
@@ -252,8 +252,23 @@ fi
 GLAB_NOTE="per-directory login"
 RUN_ENV=()
 if [ "$SHARE_GLAB" = "1" ] && [ -d "$HOST_GLAB_DIR" ]; then
-    GLAB_DIR="$HOST_GLAB_DIR"
-    GLAB_NOTE="host login ($HOST_GLAB_DIR)"
+    # The box gets a copy of the host config, made again on every start, so a
+    # change in the box does not reach the host. The copy has use_keyring set to
+    # "false": the box has no keyring, and with "true" glab fails before it
+    # looks at GITLAB_TOKEN.
+    GLAB_DIR="$PROJECT_STATE/glab-host"
+    mkdir -p "$GLAB_DIR"
+    chmod 700 "$GLAB_DIR"
+    if [ -f "$HOST_GLAB_DIR/config.yml" ]; then
+        sed -E 's/^([[:space:]]*use_keyring:).*/\1 "false"/' \
+            "$HOST_GLAB_DIR/config.yml" > "$GLAB_DIR/config.yml"
+        chmod 600 "$GLAB_DIR/config.yml"
+    fi
+    if [ -f "$HOST_GLAB_DIR/aliases.yml" ]; then
+        cp "$HOST_GLAB_DIR/aliases.yml" "$GLAB_DIR/aliases.yml"
+        chmod 600 "$GLAB_DIR/aliases.yml"
+    fi
+    GLAB_NOTE="copy of host login ($HOST_GLAB_DIR)"
     if [ -n "${GITLAB_TOKEN:-}" ]; then
         RUN_ENV+=(-e "GITLAB_TOKEN=$GITLAB_TOKEN")
         GLAB_NOTE="$GLAB_NOTE + token from GITLAB_TOKEN"

@@ -200,7 +200,8 @@ State lives on the host under `~/.claude-box/`:
   projects/
     my-app-1a2b3c4d/
       claude/   <- Claude's home (settings, transcripts, credentials)
-      glab/     <- GitLab CLI config, only with --no-share-glab
+      glab/      <- glab config, only with --no-share-glab
+      glab-host/ <- copy of the host glab config, made on every start
   memory/
     my-app-3bb5210e/  <- memory, one store per repository
 ```
@@ -237,8 +238,13 @@ moved into the shared one on the first run, if the shared one is still empty.
 `glab` reads its configuration from `$GLAB_CONFIG_DIR`, else `$XDG_CONFIG_HOME/glab-cli`,
 else `~/.config/glab-cli`. On macOS it uses `~/Library/Application Support/glab-cli`
 when `~/.config/glab-cli` does not exist. The script finds the host directory the
-same way and mounts it at `~/.config/glab-cli` in the box, so `glab` in the box is
-logged in as you and needs no setup.
+same way. On every start it copies `config.yml` and `aliases.yml` to
+`~/.claude-box/projects/<key>/glab-host` and mounts that at `~/.config/glab-cli`
+in the box, so `glab` in the box is logged in as you and needs no setup. A change
+to the config in the box does not reach the host, and the next start replaces it.
+
+The copy has `use_keyring: "false"`. The container has no keyring, and with
+`"true"` glab fails on the missing keyring before it reads `GITLAB_TOKEN`.
 
 The token itself is often not in that directory. `glab auth login` puts it in the
 operating system keyring whenever there is one, which is the default on macOS,
