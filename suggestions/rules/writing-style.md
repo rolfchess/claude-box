@@ -12,6 +12,14 @@ How to write, in chat and in docs (READMEs, comments, commit messages, plans, MR
 - No euphemisms. Name the thing plainly.
 - No metaphors when a plain word works.
 - No abbreviations. Write words in full: "for example" not "e.g.", "that is" not "i.e.", "Product Owner" not "PO".
+- Some technical abbreviations are allowed. Readers know them better than the full words, so do not spell them out:
+  - Names: ID, UUID, URL, URI, API, SDK, CLI, UI, UX, OS, IP, DNS.
+  - Sizes and units: KB, MB, GB, TB, ms.
+  - Hardware: CPU, GPU, RAM.
+  - Formats: JSON, XML, YAML, CSV, HTML, CSS, SQL, PDF.
+  - Protocols: HTTP, HTTPS, SSH, TLS, TCP, JWT.
+  - Development: CI, PR, MR, MDC.
+  - Write "the ID of the user", "a size of 10MB" and "the Apple SDK". Write any abbreviation that is not on this list in full.
 - Write complete sentences. Do not drop the subject or verb. "This is natural to do when X" not "Natural to do when X"; "It is reversible" not "Reversible".
 - Do not write "today" for the state of the code or the project. Write "now", or write the date: "as the code is now", not "as the code is today". The word is fine when it means the day itself.
 
